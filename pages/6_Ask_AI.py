@@ -49,7 +49,7 @@ def _api_key():
 
 _key = _api_key()
 if not _key:
-    st.error("ANTHROPIC_API_KEY not configured.")
+    st.info("Ask AI is not available in this deployment (ANTHROPIC_API_KEY not configured).")
     st.stop()
 
 client = anthropic.Anthropic(api_key=_key)
