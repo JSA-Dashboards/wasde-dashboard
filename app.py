@@ -15,6 +15,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 import db
+import massive
 import style
 from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_RED, SERIES_COLORS
 from units import convert, fmt, unit_label
@@ -215,7 +216,7 @@ def _kpi(label, attr_id, invert_delta=False):
         delta_s = None
     st.metric(label, disp, delta_s)
 
-k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 with k1: _kpi("Production",    "28")
 with k2: _kpi("Exports",       "88")
 with k3: _kpi("Total Use",    "185")
@@ -228,6 +229,10 @@ with k5:
     stu  = f"{es/tu*100:.1f}%"  if (es and tu and tu > 0) else "N/A"
     stup = f"{(es/tu - esp/tup)*100:+.1f}pp" if (es and tu and esp and tup and tu > 0 and tup > 0) else None
     st.metric("Stocks / Use", stu, stup)
+with k6:
+    fx_price, fx_ticker = massive.front_month_price(commodity)
+    fx_val, fx_label = massive.fmt_futures(commodity, fx_price, fx_ticker)
+    st.metric(fx_label, fx_val)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
