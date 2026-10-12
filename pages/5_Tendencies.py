@@ -20,6 +20,7 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 style.inject()
+style.nav_bar()
 
 COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]
 MONTH_LABELS = {
@@ -242,3 +243,5 @@ with st.expander("Multi-attribute tendency heatmap"):
             margin=dict(l=160, r=8, t=36, b=8),
         ))
         st.plotly_chart(fig_heat, use_container_width=True)
+
+style.disclaimer()

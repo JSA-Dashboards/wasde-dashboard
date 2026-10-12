@@ -28,6 +28,7 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 style.inject()
+style.nav_bar()
 
 # ── USDA FAS PSD API (live balance sheet; no Snowflake needed) ────────────────
 def _secret(key: str, default: str = "") -> str:
@@ -170,10 +171,10 @@ def _ts(df: pd.DataFrame, attr_id: str) -> pd.Series:
 # ── Top control bar ───────────────────────────────────────────────────────────
 rp, rp_prior = _get_reporting_periods()
 rp_yr = int(rp[:4])
-# rp_yr is the year of the latest WASDE (e.g. 2026 for the Oct-2026 report which
-# covers the 2026/27 marketing year).  Include one future year so users can look ahead.
 all_years = list(range(rp_yr + 1, 2004, -1))
-default_year_idx = 1  # index 1 = rp_yr (the actual current marketing year)
+# Default to 2026/27 until July when the new marketing year becomes current.
+_DEFAULT_MKT_YEAR = 2026
+default_year_idx = all_years.index(_DEFAULT_MKT_YEAR) if _DEFAULT_MKT_YEAR in all_years else 1
 
 st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
 _c1, _c2, _c3, _c4, _c5 = st.columns([2, 1, 1, 1, 1])
@@ -429,11 +430,4 @@ with u2:
         ))
         st.plotly_chart(fig4, use_container_width=True)
 
-# ── Footer ────────────────────────────────────────────────────────────────────
-st.markdown(
-    f"<div style='text-align:center;color:{style.TEXT_MUTED};font-size:0.72rem;"
-    f"margin-top:24px;padding-top:12px;border-top:1px solid {style.BORDER}'>"
-    "Data: USDA Foreign Agricultural Service — PSD Online &nbsp;·&nbsp; "
-    "Updated monthly with WASDE release</div>",
-    unsafe_allow_html=True,
-)
+style.disclaimer()

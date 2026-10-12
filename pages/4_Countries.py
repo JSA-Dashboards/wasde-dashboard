@@ -23,6 +23,7 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 style.inject()
+style.nav_bar()
 
 COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]
 
@@ -376,3 +377,5 @@ with c2:
             margin=dict(l=130, r=8, t=36, b=8),
         ))
         st.plotly_chart(fig_e, use_container_width=True)
+
+style.disclaimer()

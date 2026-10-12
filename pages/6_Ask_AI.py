@@ -21,6 +21,7 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 style.inject()
+style.nav_bar()
 
 COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]
 
@@ -288,3 +289,5 @@ if st.session_state.wasde_messages:
     if st.button("Clear conversation", key="clear_chat"):
         st.session_state.wasde_messages = []
         st.rerun()
+
+style.disclaimer()

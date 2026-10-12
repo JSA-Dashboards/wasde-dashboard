@@ -90,6 +90,26 @@ html, body, p, span, div, label, button, td, th {{
 }}
 .block-container {{ padding-top: 2rem; max-width: 1400px; }}
 #MainMenu, footer, .stDeployButton {{ visibility: hidden; }}
+[data-testid="stSidebar"] {{ display: none !important; }}
+[data-testid="collapsedControl"] {{ display: none !important; }}
+
+/* ── Top navigation bar ── */
+.top-nav {{
+    display: flex; gap: 4px; align-items: center;
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 8px;
+    padding: 6px 12px; margin-bottom: 16px; overflow-x: auto;
+}}
+.top-nav a {{
+    color: {TEXT_MUTED}; text-decoration: none; font-size: 0.85rem;
+    font-weight: 500; padding: 5px 12px; border-radius: 6px; white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+}}
+.top-nav a:hover {{ background: {BG}; color: {TEXT}; }}
+.top-nav a[aria-current="page"],
+.top-nav a.active {{
+    background: {JSA_GREEN}; color: #fff !important; font-weight: 600;
+}}
+.top-nav .nav-sep {{ color: {BORDER}; padding: 0 2px; user-select: none; }}
 
 /* ── Header ── */
 .dash-header {{
@@ -194,6 +214,38 @@ def inject():
 
 def sec(label: str):
     st.markdown(f"<div class='sec-header'>{label}</div>", unsafe_allow_html=True)
+
+
+_NAV_PAGES = [
+    ("app",                    "🌾 Balance Sheet"),
+    ("pages/2_Progression",    "📈 Progression"),
+    ("pages/3_Bucket_Trends",  "📊 Bucket Trends"),
+    ("pages/4_Countries",      "🌍 Countries"),
+    ("pages/5_Tendencies",     "🔍 Tendencies"),
+    ("pages/6_Ask_AI",         "🤖 Ask AI"),
+]
+
+
+def nav_bar():
+    """Render horizontal page-link nav bar. Call after inject()."""
+    cols = st.columns(len(_NAV_PAGES))
+    for col, (path, label) in zip(cols, _NAV_PAGES):
+        with col:
+            st.page_link(f"{path}.py", label=label, use_container_width=True)
+
+
+def disclaimer():
+    """Render the standard JSA disclaimer footer."""
+    st.markdown(
+        f"<div style='text-align:center;color:{TEXT_MUTED};font-size:0.72rem;"
+        f"margin-top:32px;padding-top:12px;border-top:1px solid {BORDER}'>"
+        "Data sourced from USDA Foreign Agricultural Service — PSD Online. "
+        "This dashboard is for informational purposes only and does not constitute "
+        "investment or trading advice. &nbsp;·&nbsp; "
+        "&copy; John Stewart &amp; Associates"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]

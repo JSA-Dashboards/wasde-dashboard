@@ -20,6 +20,7 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 style.inject()
+style.nav_bar()
 
 COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]
 
@@ -278,3 +279,5 @@ with st.expander("Compare with prior marketing year"):
             yaxis_title=ul, height=350,
         ))
         st.plotly_chart(fig2, use_container_width=True)
+
+style.disclaimer()
