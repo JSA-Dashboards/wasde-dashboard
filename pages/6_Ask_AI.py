@@ -18,13 +18,20 @@ st.set_page_config(
     page_title="JSA WASDE — Ask AI",
     page_icon="💬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 style.inject()
 
 COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]
 
-commodity, region, imperial = style.sidebar_nav(COMMODITIES)
+st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
+_c1, _c2 = st.columns([2, 1])
+with _c1:
+    commodity = st.selectbox("Commodity", COMMODITIES)
+with _c2:
+    region = st.radio("Region", ["US", "World"], horizontal=True)
+st.markdown("</div>", unsafe_allow_html=True)
+imperial = False
 country = "0000US" if region == "US" else "0000World"
 ul = unit_label(commodity, imperial)
 

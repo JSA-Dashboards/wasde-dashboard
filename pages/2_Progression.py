@@ -17,7 +17,7 @@ st.set_page_config(
     page_title="JSA WASDE — Progression",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 style.inject()
 
@@ -33,27 +33,31 @@ KEY_ATTRS = [
     "Total Use", "Feed/Residual Use", "Food/Seed/Industrial Use",
 ]
 
-commodity, region, imperial = style.sidebar_nav(COMMODITIES)
+st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
+_c1, _c2, _c3, _c4 = st.columns([2, 1, 1, 1])
+with _c1:
+    commodity = st.selectbox("Commodity", COMMODITIES)
+with _c2:
+    region = st.radio("Region", ["US", "World"], horizontal=True)
+with _c3:
+    imperial = st.toggle("Million bu", value=False)
+with _c4:
+    mkt_year = st.selectbox("Mkt Year", list(range(2026, 2004, -1)), index=0,
+                             format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
+st.markdown("</div>", unsafe_allow_html=True)
+
 country = "0000US" if region == "US" else "0000World"
 ul = unit_label(commodity, imperial)
 
-with st.sidebar:
-    mkt_year = st.selectbox(
-        "Marketing Year", list(range(2026, 2004, -1)), index=0,
-        format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
-
 st.markdown(
-    f"<h1 style='margin:0;font-size:1.75rem;font-weight:800'>"
-    f"{commodity} — WASDE Progression</h1>",
+    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.35rem;"
+    f"font-weight:600;color:{style.TEXT};margin-bottom:2px'>"
+    f"{commodity} — WASDE Progression &nbsp;"
+    f"<span style='font-size:0.95rem;color:{style.TEXT_MUTED};font-weight:400'>"
+    f"{mkt_year}/{str(mkt_year+1)[-2:]} &nbsp;·&nbsp; {region}</span></div>",
     unsafe_allow_html=True,
 )
-st.markdown(
-    f"<div style='color:{style.TEXT_MUTED};font-size:0.83rem;margin-bottom:4px'>"
-    f"How estimates evolved across monthly WASDE releases — "
-    f"{mkt_year}/{str(mkt_year+1)[-2:]} &nbsp;·&nbsp; {region}</div>",
-    unsafe_allow_html=True,
-)
-st.markdown("<hr style='margin:8px 0 16px'>", unsafe_allow_html=True)
+st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsafe_allow_html=True)
 
 if not db.snowflake_available():
     st.info(

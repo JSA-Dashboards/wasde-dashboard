@@ -16,7 +16,7 @@ st.set_page_config(
     page_title="JSA WASDE — Countries",
     page_icon="🌍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 style.inject()
 
@@ -27,28 +27,37 @@ COMM_CODES  = {
 }
 PSD_BASE = "https://apps.fas.usda.gov/psdonline/api"
 
-commodity, _, imperial = style.sidebar_nav(COMMODITIES)
-ul = unit_label(commodity, imperial)
-
-with st.sidebar:
-    mkt_year = st.selectbox("Marketing Year", list(range(2026, 2004, -1)), index=0,
+st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
+_c1, _c2, _c3, _c4, _c5 = st.columns([2, 1, 1, 1, 1])
+with _c1:
+    commodity = st.selectbox("Commodity", COMMODITIES)
+with _c2:
+    imperial = st.toggle("Million bu", value=False)
+with _c3:
+    mkt_year = st.selectbox("Mkt Year", list(range(2026, 2004, -1)), index=0,
                              format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
+with _c4:
     attr_choice = st.selectbox("Attribute", [
         "Production", "Exports", "Imports", "Ending Stocks", "Total Use",
     ])
-    top_n = st.slider("Top N countries", 5, 20, 10)
+with _c5:
+    top_n = st.slider("Top N", 5, 20, 10)
+st.markdown("</div>", unsafe_allow_html=True)
+
+ul = unit_label(commodity, imperial)
 
 st.markdown(
-    f"<h1 style='margin:0;font-size:1.75rem;font-weight:800'>"
-    f"{commodity} — Country View</h1>",
+    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.35rem;"
+    f"font-weight:600;color:{style.TEXT};margin-bottom:2px'>"
+    f"{commodity} — Country View</div>",
     unsafe_allow_html=True,
 )
 st.markdown(
-    f"<div style='color:{style.TEXT_MUTED};font-size:0.83rem;margin-bottom:4px'>"
-    f"Top countries by {attr_choice} &nbsp;·&nbsp; {mkt_year}/{str(mkt_year+1)[-2:]}</div>",
+    f"<span style='font-size:0.95rem;color:{style.TEXT_MUTED};font-weight:400'>"
+    f"Top countries by {attr_choice} &nbsp;·&nbsp; {mkt_year}/{str(mkt_year+1)[-2:]}</span>",
     unsafe_allow_html=True,
 )
-st.markdown("<hr style='margin:8px 0 16px'>", unsafe_allow_html=True)
+st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsafe_allow_html=True)
 
 ATTR_MAP = {
     "Production": 28, "Exports": 88, "Imports": 40,

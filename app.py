@@ -25,7 +25,7 @@ st.set_page_config(
     page_title="JSA WASDE — Balance Sheet",
     page_icon="🌾",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 style.inject()
 
@@ -160,20 +160,30 @@ def _ts(df: pd.DataFrame, attr_id: str) -> pd.Series:
     return sub.set_index("marketYear")["value"].astype(float)
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-commodity, region, imperial = style.sidebar_nav(COMMODITIES)
-comm_code   = COMM_CODES[commodity]
-country_code = US_COUNTRY if region == "US" else WORLD_COUNTRY
+# ── Top control bar ───────────────────────────────────────────────────────────
+rp    = _get_latest_period()
+rp_yr = int(rp[:4])
+all_years = list(range(rp_yr + 1, 2004, -1))
 
-with st.sidebar:
-    rp     = _get_latest_period()
-    rp_yr  = int(rp[:4])
-    all_years = list(range(rp_yr + 1, 2004, -1))
-    mkt_year  = st.selectbox("Marketing Year", all_years, index=0,
-                              format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
+st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
+_c1, _c2, _c3, _c4, _c5 = st.columns([2, 1, 1, 1, 1])
+with _c1:
+    commodity = st.selectbox("Commodity", COMMODITIES, label_visibility="visible")
+with _c2:
+    region = st.radio("Region", ["US", "World"], horizontal=True)
+with _c3:
+    imperial = st.toggle("Million bu", value=False)
+with _c4:
+    mkt_year = st.selectbox("Mkt Year", all_years, index=0,
+                             format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
+with _c5:
     hist_from = st.selectbox("History from", list(range(2005, mkt_year + 1)),
                               index=0,
                               format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
+st.markdown("</div>", unsafe_allow_html=True)
+
+comm_code    = COMM_CODES[commodity]
+country_code = US_COUNTRY if region == "US" else WORLD_COUNTRY
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 with st.spinner("Loading PSD data…"):
@@ -183,24 +193,15 @@ with st.spinner("Loading PSD data…"):
 
 ul = unit_label(commodity, imperial)
 
-# ── Header ────────────────────────────────────────────────────────────────────
-c1, c2 = st.columns([6, 2])
-with c1:
-    st.markdown(
-        f"<h1 style='margin:0;font-size:1.75rem;font-weight:800;color:{style.TEXT}'>"
-        f"{commodity} — {region} Supply & Demand</h1>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f"<div style='color:{style.TEXT_MUTED};font-size:0.83rem;margin-bottom:4px'>"
-        f"Marketing Year {mkt_year}/{str(mkt_year+1)[-2:]} &nbsp;·&nbsp; "
-        f"USDA FAS PSD &nbsp;·&nbsp; Units: {ul}</div>",
-        unsafe_allow_html=True,
-    )
-with c2:
-    st.markdown("<div style='text-align:right'>", unsafe_allow_html=True)
-
-st.markdown("<hr style='margin:8px 0 16px'>", unsafe_allow_html=True)
+st.markdown(
+    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.35rem;"
+    f"font-weight:600;color:{style.TEXT};margin-bottom:2px'>"
+    f"{commodity} — {region} Balance Sheet &nbsp;"
+    f"<span style='font-size:0.95rem;color:{style.TEXT_MUTED};font-weight:400'>"
+    f"{mkt_year}/{str(mkt_year+1)[-2:]} &nbsp;·&nbsp; USDA FAS PSD &nbsp;·&nbsp; {ul}</span></div>",
+    unsafe_allow_html=True,
+)
+st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsafe_allow_html=True)
 
 # ── KPI row ───────────────────────────────────────────────────────────────────
 def _kpi(label, attr_id, invert_delta=False):
