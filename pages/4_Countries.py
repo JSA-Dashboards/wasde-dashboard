@@ -5,7 +5,9 @@ Bulk API  → ranking + Δ LY + Δ 5YA (all countries, latest vintage only).
 Viz API   → Δ LR per top-N country (current vs prior WASDE reporting period).
 """
 
+import io
 import re
+import zipfile
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -47,8 +49,18 @@ ATTR_IDS = {
 
 WORLD_CODES = {"0000US", "00World", "World", "00", "0000WO", "WorldTotal"}
 
-PSD_BULK     = "https://apps.fas.usda.gov/psdonline/api/data/get"
+PSD_BULK_ZIP = "https://apps.fas.usda.gov/psdonline/downloads/psd_grains_pulses_csv.zip"
+PSD_OILSEEDS_ZIP = "https://apps.fas.usda.gov/psdonline/downloads/psd_oilseeds_csv.zip"
 PSD_VIZ_BASE = "https://apps.fas.usda.gov/PSDOnlineApi/api/CompositeVisualization"
+
+COMM_ZIP = {
+    "Corn":         PSD_BULK_ZIP,
+    "Soybeans":     PSD_OILSEEDS_ZIP,
+    "Wheat":        PSD_BULK_ZIP,
+    "Cotton":       "https://apps.fas.usda.gov/psdonline/downloads/psd_cotton_csv.zip",
+    "Rice, Milled": PSD_BULK_ZIP,
+    "Soybean Oil":  PSD_OILSEEDS_ZIP,
+}
 
 # ── Controls ──────────────────────────────────────────────────────────────────
 st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
@@ -108,35 +120,45 @@ prior_mo  = int(rp_prior[4:])
 prior_lbl = pd.Timestamp(year=prior_yr, month=prior_mo, day=1).strftime("%b %Y")
 
 
-# ── Bulk API: ranking + Δ LY + Δ 5YA ─────────────────────────────────────────
+# ── Bulk CSV ZIP: ranking + Δ LY + Δ 5YA ────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_psd(comm_code: str) -> pd.DataFrame:
+def _fetch_psd(comm_code: str, zip_url: str) -> pd.DataFrame:
+    """Download USDA FAS PSD CSV ZIP and return long-form DataFrame for one commodity."""
     try:
-        resp = requests.get(PSD_BULK, params={"commodityCode": comm_code},
-                            timeout=90, headers={"User-Agent": "Mozilla/5.0"})
+        resp = requests.get(zip_url, timeout=120, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
-        data = resp.json()
-        if not data:
-            return pd.DataFrame()
-        df = pd.DataFrame(data)
-        df.columns = [c.lower() for c in df.columns]
-        df = df.rename(columns={
-            next((c for c in df.columns if "attributeid" in c), "attributeid"): "attr_id",
-            next((c for c in df.columns if "marketyear"  in c), "marketyear"):  "market_year",
-            next((c for c in df.columns if c == "countrycode"), "countrycode"): "country_code",
-            next((c for c in df.columns if c == "countryname"), "countryname"): "country_name",
-            next((c for c in df.columns if c == "value"),       "value"):       "value",
-        }, errors="ignore")
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            # Pick the first CSV file inside the ZIP
+            csv_name = next((n for n in z.namelist() if n.endswith(".csv")), None)
+            if not csv_name:
+                return pd.DataFrame()
+            with z.open(csv_name) as f:
+                df = pd.read_csv(f, low_memory=False)
+        df.columns = [c.strip() for c in df.columns]
+        # Normalise column names
+        col_map = {}
+        for c in df.columns:
+            cl = c.lower().replace("_", "").replace(" ", "")
+            if "commoditycode" in cl:   col_map[c] = "commodity_code"
+            elif "attributeid" in cl:   col_map[c] = "attr_id"
+            elif "marketyear" in cl:    col_map[c] = "market_year"
+            elif "countrycode" in cl:   col_map[c] = "country_code"
+            elif "countryname" in cl:   col_map[c] = "country_name"
+            elif cl == "value":         col_map[c] = "value"
+        df = df.rename(columns=col_map)
         for col in ("attr_id", "market_year", "value"):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
+        # Filter to just this commodity
+        if "commodity_code" in df.columns:
+            df = df[df["commodity_code"].astype(str).str.strip() == str(comm_code)]
         return df
     except Exception:
         return pd.DataFrame()
 
 
-def _build_ranking(comm_code: str, attr_id: int, year: int, n: int) -> pd.DataFrame:
-    raw = _fetch_psd(comm_code)
+def _build_ranking(comm_code: str, attr_id: int, year: int, n: int, zip_url: str) -> pd.DataFrame:
+    raw = _fetch_psd(comm_code, zip_url)
     if raw.empty or "attr_id" not in raw.columns:
         return pd.DataFrame()
 
@@ -257,13 +279,15 @@ def _add_delta_lr(rank_df: pd.DataFrame, comm_code: str,
 
 
 # ── Load data ─────────────────────────────────────────────────────────────────
+zip_url = COMM_ZIP[commodity]
+
 with st.spinner("Loading country data from USDA FAS…"):
-    rank_df = _build_ranking(COMM_CODES[commodity], ATTR_IDS[attr_choice], mkt_year, top_n)
+    rank_df = _build_ranking(COMM_CODES[commodity], ATTR_IDS[attr_choice], mkt_year, top_n, zip_url)
 
 if rank_df.empty:
-    raw_debug = _fetch_psd(COMM_CODES[commodity])
+    raw_debug = _fetch_psd(COMM_CODES[commodity], zip_url)
     if raw_debug.empty:
-        st.error("PSD bulk API returned no data — may be unreachable or rate-limited.")
+        st.error("PSD CSV download returned no data — ZIP may be unreachable. Try again shortly.")
     else:
         avail_attrs = sorted(raw_debug["attr_id"].dropna().unique().tolist()) if "attr_id" in raw_debug.columns else []
         avail_yrs   = sorted(raw_debug["market_year"].dropna().unique().tolist(), reverse=True)[:5] if "market_year" in raw_debug.columns else []
@@ -352,12 +376,12 @@ c1, c2 = st.columns(2)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _side(comm_code, attr_id, year, n):
-    return _build_ranking(comm_code, attr_id, year, n)
+def _side(comm_code, attr_id, year, n, zip_url):
+    return _build_ranking(comm_code, attr_id, year, n, zip_url)
 
 
 with c1:
-    prod_df = _side(COMM_CODES[commodity], ATTR_IDS["Production"], mkt_year, 8)
+    prod_df = _side(COMM_CODES[commodity], ATTR_IDS["Production"], mkt_year, 8, zip_url)
     if not prod_df.empty:
         fig_p = go.Figure(go.Bar(
             x=prod_df["current"].tolist()[::-1],
@@ -372,7 +396,7 @@ with c1:
         st.plotly_chart(fig_p, use_container_width=True)
 
 with c2:
-    exp_df = _side(COMM_CODES[commodity], ATTR_IDS["Exports"], mkt_year, 8)
+    exp_df = _side(COMM_CODES[commodity], ATTR_IDS["Exports"], mkt_year, 8, zip_url)
     if not exp_df.empty:
         fig_e = go.Figure(go.Bar(
             x=exp_df["current"].tolist()[::-1],
