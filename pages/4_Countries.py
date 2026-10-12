@@ -261,11 +261,19 @@ with st.spinner("Loading country data from USDA FAS…"):
     rank_df = _build_ranking(COMM_CODES[commodity], ATTR_IDS[attr_choice], mkt_year, top_n)
 
 if rank_df.empty:
-    st.warning(
-        f"No country-level data for **{commodity} — {attr_choice}** in "
-        f"{mkt_year}/{str(mkt_year+1)[-2:]}. USDA FAS may not publish this "
-        "attribute for the selected combination, or data isn't available yet."
-    )
+    raw_debug = _fetch_psd(COMM_CODES[commodity])
+    if raw_debug.empty:
+        st.error("PSD bulk API returned no data — may be unreachable or rate-limited.")
+    else:
+        avail_attrs = sorted(raw_debug["attr_id"].dropna().unique().tolist()) if "attr_id" in raw_debug.columns else []
+        avail_yrs   = sorted(raw_debug["market_year"].dropna().unique().tolist(), reverse=True)[:5] if "market_year" in raw_debug.columns else []
+        st.warning(
+            f"No country-level data for **{commodity} — {attr_choice}** "
+            f"(attr_id={ATTR_IDS[attr_choice]}) in {mkt_year}/{str(mkt_year+1)[-2:]}. "
+            f"Available attr IDs: {avail_attrs[:15]}. "
+            f"Available years: {avail_yrs}. "
+            f"Columns: {list(raw_debug.columns)}."
+        )
     st.stop()
 
 with st.spinner(f"Fetching {prior_lbl} WASDE for Δ LR…"):
