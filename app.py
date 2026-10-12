@@ -57,16 +57,16 @@ WORLD_COUNTRY = "00"
 ATTR = {
     "20":  "Beginning Stocks",
     "28":  "Production",
-    "40":  "Imports",
-    "125": "Total Supply",
-    "57":  "Feed/Residual Use",
-    "58":  "Food/Seed/Industrial Use",
+    "57":  "Imports",
+    "86":  "Total Supply",
+    "130": "Feed/Residual Use",
+    "192": "Food/Seed/Industrial Use",
     "88":  "Exports",
     "185": "Total Use",
     "176": "Ending Stocks",
 }
 
-BALANCE_ORDER = ["20", "28", "40", "125", "57", "58", "88", "185", "176"]
+BALANCE_ORDER = ["20", "28", "57", "86", "130", "192", "88", "185", "176"]
 TOTAL_ROWS    = {"Total Supply", "Total Use"}
 STOCK_ROWS    = {"Beginning Stocks", "Ending Stocks"}
 
@@ -151,7 +151,20 @@ def _parse_viz_response(data: dict) -> pd.DataFrame:
                 "marketYear":    myr,
                 "value":         value,
             })
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    # PSD has no Total Use attribute: derive it as Total Consumption (125) + MY Exports (88)
+    piv = df[df["attributeId"].isin(["125", "88"])].pivot_table(
+        index="marketYear", columns="attributeId", values="value", aggfunc="first")
+    if {"125", "88"}.issubset(piv.columns):
+        tu = piv.dropna(subset=["125", "88"]).sum(axis=1).reset_index()
+        tu.columns = ["marketYear", "value"]
+        tu["attributeId"] = "185"
+        tu["attributeName"] = "Total Use"
+        df = pd.concat([df, tu[["attributeId", "attributeName", "marketYear", "value"]]],
+                       ignore_index=True)
+    return df
 
 
 def _val(df: pd.DataFrame, attr_id: str, year: int) -> float | None:
@@ -390,8 +403,8 @@ style.sec("Domestic Use Breakdown")
 u1, u2 = st.columns(2)
 
 with u1:
-    feed_ts = _ts(df_hist, "57")
-    fsi_ts  = _ts(df_hist, "58")
+    feed_ts = _ts(df_hist, "130")
+    fsi_ts  = _ts(df_hist, "192")
     exp_ts  = _ts(df_hist, "88")
     idx = sorted(set(feed_ts.index) | set(fsi_ts.index) | set(exp_ts.index))
     fig3 = go.Figure()
@@ -410,8 +423,8 @@ with u1:
 
 with u2:
     pie_vals = {
-        "Feed/Residual":         convert(_val(df, "57", mkt_year), commodity, imperial),
-        "Food/Seed/Industrial":  convert(_val(df, "58", mkt_year), commodity, imperial),
+        "Feed/Residual":         convert(_val(df, "130", mkt_year), commodity, imperial),
+        "Food/Seed/Industrial":  convert(_val(df, "192", mkt_year), commodity, imperial),
         "Exports":               convert(_val(df, "88", mkt_year), commodity, imperial),
     }
     pie_vals = {k: v for k, v in pie_vals.items() if v and v > 0}

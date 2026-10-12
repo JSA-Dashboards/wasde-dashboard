@@ -40,9 +40,9 @@ COMM_CODES = {
 ATTR_IDS = {
     "Production":    "28",
     "Exports":       "88",
-    "Imports":       "40",
+    "Imports":       "57",
     "Ending Stocks": "176",
-    "Total Use":     "185",
+    "Consumption":   "125",
 }
 
 PSD_VIZ_BASE = "https://apps.fas.usda.gov/PSDOnlineApi/api/CompositeVisualization"
