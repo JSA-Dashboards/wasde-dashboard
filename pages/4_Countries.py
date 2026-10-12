@@ -1,13 +1,11 @@
 """
 Page 4 — Country View
 Top producers, exporters, importers by commodity.
-Bulk API  → ranking + Δ LY + Δ 5YA (all countries, latest vintage only).
-Viz API   → Δ LR per top-N country (current vs prior WASDE reporting period).
+Uses only the Viz API (confirmed working from Streamlit Cloud).
+Bulk CSV ZIP downloads are blocked; all data comes from GetAllAttributeData.
 """
 
-import io
 import re
-import zipfile
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -30,36 +28,68 @@ style.nav_bar()
 COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]
 
 COMM_CODES = {
-    "Corn":        "0440000",
-    "Soybeans":    "2222000",
-    "Wheat":       "0410000",
-    "Cotton":      "2631000",
-    "Rice, Milled":"0422110",
-    "Soybean Oil": "4232000",
+    "Corn":         "0440000",
+    "Soybeans":     "2222000",
+    "Wheat":        "0410000",
+    "Cotton":       "2631000",
+    "Rice, Milled": "0422110",
+    "Soybean Oil":  "4232000",
 }
 
-# Integer attr IDs used by the bulk API; string forms match the viz API response
+# Attribute IDs as strings (matched against viz API response attributeId field)
 ATTR_IDS = {
-    "Production":    28,
-    "Exports":       88,
-    "Imports":       40,
-    "Ending Stocks": 176,
-    "Total Use":     185,
+    "Production":    "28",
+    "Exports":       "88",
+    "Imports":       "40",
+    "Ending Stocks": "176",
+    "Total Use":     "185",
 }
 
-WORLD_CODES = {"0000US", "00World", "World", "00", "0000WO", "WorldTotal"}
-
-PSD_BULK_ZIP = "https://apps.fas.usda.gov/psdonline/downloads/psd_grains_pulses_csv.zip"
-PSD_OILSEEDS_ZIP = "https://apps.fas.usda.gov/psdonline/downloads/psd_oilseeds_csv.zip"
 PSD_VIZ_BASE = "https://apps.fas.usda.gov/PSDOnlineApi/api/CompositeVisualization"
 
-COMM_ZIP = {
-    "Corn":         PSD_BULK_ZIP,
-    "Soybeans":     PSD_OILSEEDS_ZIP,
-    "Wheat":        PSD_BULK_ZIP,
-    "Cotton":       "https://apps.fas.usda.gov/psdonline/downloads/psd_cotton_csv.zip",
-    "Rice, Milled": PSD_BULK_ZIP,
-    "Soybean Oil":  PSD_OILSEEDS_ZIP,
+# Display names for country codes used in curated universes
+COUNTRY_NAMES = {
+    "US": "United States",  "BR": "Brazil",         "AR": "Argentina",
+    "CH": "China",          "E4": "European Union",  "UP": "Ukraine",
+    "IN": "India",          "MX": "Mexico",          "RS": "Russia",
+    "SF": "South Africa",   "CA": "Canada",          "EG": "Egypt",
+    "NG": "Nigeria",        "TH": "Thailand",        "KZ": "Kazakhstan",
+    "TZ": "Tanzania",       "ET": "Ethiopia",        "PH": "Philippines",
+    "PA": "Paraguay",       "BO": "Bolivia",         "UR": "Uruguay",
+    "ZA": "Zambia",         "AS": "Australia",       "TU": "Turkey",
+    "PK": "Pakistan",       "IR": "Iran",            "MO": "Morocco",
+    "KS": "Korea, South",   "UK": "United Kingdom",  "UZ": "Uzbekistan",
+    "ML": "Mali",           "BM": "Burma",           "JA": "Japan",
+    "BD": "Bangladesh",     "VM": "Vietnam",         "ID": "Indonesia",
+    "KN": "Korea, North",   "MY": "Malaysia",        "TX": "Turkmenistan",
+}
+
+# Curated country universe per commodity — enough to capture top 15 for any attribute
+COUNTRY_UNIVERSE = {
+    "Corn": [
+        "US", "BR", "AR", "CH", "E4", "UP", "IN", "MX", "RS",
+        "SF", "CA", "EG", "NG", "TH", "KZ", "TZ", "ET", "PH",
+    ],
+    "Soybeans": [
+        "US", "BR", "AR", "CH", "IN", "CA", "PA", "RS", "UP",
+        "BO", "E4", "UR", "ZA",
+    ],
+    "Wheat": [
+        "CH", "E4", "IN", "RS", "US", "CA", "AS", "AR", "KZ",
+        "TU", "UP", "PK", "IR", "MO", "EG", "KS", "UK", "BR",
+    ],
+    "Cotton": [
+        "IN", "CH", "US", "PK", "BR", "AS", "TU", "UZ", "AR",
+        "UP", "ML", "BM", "TX",
+    ],
+    "Rice, Milled": [
+        "CH", "IN", "ID", "TH", "VM", "BM", "BD", "BR", "PH",
+        "JA", "PK", "NG", "KS", "US", "KN", "TZ",
+    ],
+    "Soybean Oil": [
+        "CH", "IN", "E4", "AR", "BR", "US", "ID", "MY", "RS",
+        "PK", "TH", "KZ",
+    ],
 }
 
 # ── Controls ──────────────────────────────────────────────────────────────────
@@ -96,7 +126,7 @@ st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsaf
 
 # ── Reporting periods ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def _get_periods() -> tuple[str, str]:
+def _get_periods() -> tuple:
     try:
         r = requests.get(f"{PSD_VIZ_BASE}/GetReportingPeriods", timeout=20,
                          headers={"User-Agent": "JPSI-WASDE/1.0"})
@@ -120,98 +150,7 @@ prior_mo  = int(rp_prior[4:])
 prior_lbl = pd.Timestamp(year=prior_yr, month=prior_mo, day=1).strftime("%b %Y")
 
 
-# ── Bulk CSV ZIP: ranking + Δ LY + Δ 5YA ────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_psd(comm_code: str, zip_url: str) -> pd.DataFrame:
-    """Download USDA FAS PSD CSV ZIP and return long-form DataFrame for one commodity."""
-    try:
-        resp = requests.get(zip_url, timeout=120, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-            # Pick the first CSV file inside the ZIP
-            csv_name = next((n for n in z.namelist() if n.endswith(".csv")), None)
-            if not csv_name:
-                return pd.DataFrame()
-            with z.open(csv_name) as f:
-                df = pd.read_csv(f, low_memory=False)
-        df.columns = [c.strip() for c in df.columns]
-        # Normalise column names
-        col_map = {}
-        for c in df.columns:
-            cl = c.lower().replace("_", "").replace(" ", "")
-            if "commoditycode" in cl:   col_map[c] = "commodity_code"
-            elif "attributeid" in cl:   col_map[c] = "attr_id"
-            elif "marketyear" in cl:    col_map[c] = "market_year"
-            elif "countrycode" in cl:   col_map[c] = "country_code"
-            elif "countryname" in cl:   col_map[c] = "country_name"
-            elif cl == "value":         col_map[c] = "value"
-        df = df.rename(columns=col_map)
-        for col in ("attr_id", "market_year", "value"):
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        # Filter to just this commodity
-        if "commodity_code" in df.columns:
-            df = df[df["commodity_code"].astype(str).str.strip() == str(comm_code)]
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-
-def _build_ranking(comm_code: str, attr_id: int, year: int, n: int, zip_url: str) -> pd.DataFrame:
-    raw = _fetch_psd(comm_code, zip_url)
-    if raw.empty or "attr_id" not in raw.columns:
-        return pd.DataFrame()
-
-    needed = {"attr_id", "market_year", "country_code", "value"}
-    if not needed.issubset(raw.columns):
-        return pd.DataFrame()
-
-    sub = raw[raw["attr_id"] == attr_id].copy()
-    sub = sub[~sub["country_code"].isin(WORLD_CODES)]
-    sub = sub.dropna(subset=["market_year", "value"])
-
-    idx_cols = (["country_code", "country_name"]
-                if "country_name" in sub.columns else ["country_code"])
-    pivot = sub.pivot_table(index=idx_cols, columns="market_year",
-                            values="value", aggfunc="first")
-
-    if year not in pivot.columns:
-        return pd.DataFrame()
-
-    cur = pivot[year].dropna()
-    cur = cur[cur > 0].nlargest(n)
-
-    rows = []
-    for idx_key, val in cur.items():
-        if isinstance(idx_key, tuple):
-            code, cname = idx_key[0], idx_key[1] if len(idx_key) > 1 else idx_key[0]
-        else:
-            code, cname = idx_key, idx_key
-
-        cur_c = convert(val, commodity, imperial)
-
-        ly_val = pivot.loc[idx_key, year - 1] if (year - 1) in pivot.columns else None
-        delta_ly = (cur_c - convert(ly_val, commodity, imperial)) \
-            if (ly_val is not None and not pd.isna(ly_val)) else None
-
-        five_yr_cols = [y for y in range(year - 5, year) if y in pivot.columns]
-        five_yr_vals = [convert(pivot.loc[idx_key, y], commodity, imperial)
-                        for y in five_yr_cols if not pd.isna(pivot.loc[idx_key, y])]
-        delta_5ya = (cur_c - sum(five_yr_vals) / len(five_yr_vals)) if five_yr_vals else None
-
-        rows.append({
-            "country_code": code,
-            "country_name": cname,
-            "current":      cur_c,
-            "delta_lr":     None,   # filled in below
-            "delta_ly":     delta_ly,
-            "delta_5ya":    delta_5ya,
-        })
-
-    return pd.DataFrame(rows)
-
-
-# ── Viz API: Δ LR per country ─────────────────────────────────────────────────
+# ── Viz API helpers ───────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_viz(comm_code: str, country_code: str, period: str) -> dict:
     try:
@@ -234,75 +173,113 @@ def _fetch_viz(comm_code: str, country_code: str, period: str) -> dict:
         return {}
 
 
-def _parse_attr_value(data: dict, attr_id_str: str, year: int) -> float | None:
-    """Extract one attribute+year value from a GetAllAttributeData response."""
+def _parse_attr(data: dict, attr_id_str: str) -> dict:
+    """Return a dict {year: value, 'delta_lr': raw_change} for a given attribute."""
+    result = {}
     headers = data.get("headerValues", [])
     for attr in data.get("attributeValues", []):
         if str(attr.get("attributeId", "")).strip() != attr_id_str:
             continue
         vals = attr.get("attributeValues", [])
         for col_i, hdr in enumerate(headers[1:]):
-            if col_i in (1, 2):
+            hdr = str(hdr).strip()
+            # The Change column (col_i=1) gives Δ LR for the current year
+            if col_i == 1:
+                raw = vals[col_i] if col_i < len(vals) else None
+                if raw and raw not in ("", "-"):
+                    # format: "+5949(+1.48%)" — extract just the leading number
+                    m = re.match(r"([+-]?\d[\d,]*)", str(raw).replace(" ", ""))
+                    if m:
+                        try:
+                            result["delta_lr_raw"] = float(m.group(1).replace(",", ""))
+                        except ValueError:
+                            pass
                 continue
-            m = re.match(r"(\d{2})/\d{2}", hdr.strip())
+            # Skip the prior-period repeat column (col_i=2, same year as col_i=0)
+            if col_i == 2:
+                continue
+            m = re.match(r"(\d{2})/\d{2}", hdr)
             if not m or col_i >= len(vals):
                 continue
             myr = 2000 + int(m.group(1))
-            if myr != year:
-                continue
             raw = vals[col_i]
-            if raw is None or raw == "":
-                return None
+            if raw is None or raw == "" or raw == "-":
+                continue
             try:
-                return float(str(raw).split("(")[0].strip().replace(",", ""))
+                result[myr] = float(str(raw).split("(")[0].strip().replace(",", ""))
             except ValueError:
-                return None
-    return None
+                pass
+        break  # found our attribute
+    return result
 
 
-def _add_delta_lr(rank_df: pd.DataFrame, comm_code: str,
-                  attr_id: int, year: int) -> pd.DataFrame:
-    """Fetch prior-period viz data for each country and compute Δ LR."""
-    if rank_df.empty or rp == rp_prior:
-        return rank_df
+def _country_name_from_viz(country_code: str) -> str:
+    return COUNTRY_NAMES.get(country_code, country_code)
 
-    attr_id_str = str(attr_id)
-    for i, row in rank_df.iterrows():
-        cc   = row["country_code"]
-        data = _fetch_viz(comm_code, cc, rp_prior)
-        prior_val = _parse_attr_value(data, attr_id_str, year)
-        if prior_val is not None:
-            prior_c = convert(prior_val, commodity, imperial)
-            rank_df.at[i, "delta_lr"] = row["current"] - prior_c
 
-    return rank_df
+def _build_ranking_viz(comm_code: str, attr_id_str: str, year: int,
+                        n: int, countries: list, commodity_name: str,
+                        use_imperial: bool) -> pd.DataFrame:
+    """Build ranking table entirely from viz API calls (no ZIP download)."""
+    rows = []
+    for cc in countries:
+        data   = _fetch_viz(comm_code, cc, rp)
+        parsed = _parse_attr(data, attr_id_str)
+
+        cur_raw = parsed.get(year)
+        if cur_raw is None or cur_raw <= 0:
+            continue
+
+        cname   = _country_name_from_viz(cc)
+        cur_c   = convert(cur_raw, commodity_name, use_imperial)
+
+        # Δ LR — already in the Change column of the current-period response
+        dlr_raw  = parsed.get("delta_lr_raw")
+        delta_lr = convert(dlr_raw, commodity_name, use_imperial) if dlr_raw is not None else None
+
+        # Δ LY
+        ly_raw   = parsed.get(year - 1)
+        delta_ly = (cur_c - convert(ly_raw, commodity_name, use_imperial)) if ly_raw is not None else None
+
+        # Δ 5YA
+        five_vals = [convert(parsed[y], commodity_name, use_imperial)
+                     for y in range(year - 5, year) if y in parsed]
+        delta_5ya = (cur_c - sum(five_vals) / len(five_vals)) if five_vals else None
+
+        rows.append({
+            "country_code": cc,
+            "country_name": cname,
+            "current":      cur_c,
+            "delta_lr":     delta_lr,
+            "delta_ly":     delta_ly,
+            "delta_5ya":    delta_5ya,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    return (pd.DataFrame(rows)
+              .sort_values("current", ascending=False)
+              .head(n)
+              .reset_index(drop=True))
 
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-zip_url = COMM_ZIP[commodity]
+countries = COUNTRY_UNIVERSE.get(commodity, list(COUNTRY_UNIVERSE["Corn"]))
 
-with st.spinner("Loading country data from USDA FAS…"):
-    rank_df = _build_ranking(COMM_CODES[commodity], ATTR_IDS[attr_choice], mkt_year, top_n, zip_url)
+with st.spinner(f"Loading {commodity} country data from USDA FAS…"):
+    rank_df = _build_ranking_viz(
+        COMM_CODES[commodity], ATTR_IDS[attr_choice], mkt_year,
+        top_n, countries, commodity, imperial,
+    )
 
 if rank_df.empty:
-    raw_debug = _fetch_psd(COMM_CODES[commodity], zip_url)
-    if raw_debug.empty:
-        st.error("PSD CSV download returned no data — ZIP may be unreachable. Try again shortly.")
-    else:
-        avail_attrs = sorted(raw_debug["attr_id"].dropna().unique().tolist()) if "attr_id" in raw_debug.columns else []
-        avail_yrs   = sorted(raw_debug["market_year"].dropna().unique().tolist(), reverse=True)[:5] if "market_year" in raw_debug.columns else []
-        st.warning(
-            f"No country-level data for **{commodity} — {attr_choice}** "
-            f"(attr_id={ATTR_IDS[attr_choice]}) in {mkt_year}/{str(mkt_year+1)[-2:]}. "
-            f"Available attr IDs: {avail_attrs[:15]}. "
-            f"Available years: {avail_yrs}. "
-            f"Columns: {list(raw_debug.columns)}."
-        )
+    st.warning(
+        f"No data returned for **{commodity} — {attr_choice}** in "
+        f"{mkt_year}/{str(mkt_year+1)[-2:]}. "
+        "USDA FAS may not have data for this combination yet."
+    )
     st.stop()
-
-with st.spinner(f"Fetching {prior_lbl} WASDE for Δ LR…"):
-    rank_df = _add_delta_lr(rank_df, COMM_CODES[commodity],
-                            ATTR_IDS[attr_choice], mkt_year)
 
 
 # ── Layout: chart left, ranking table right ───────────────────────────────────
@@ -376,12 +353,13 @@ c1, c2 = st.columns(2)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _side(comm_code, attr_id, year, n, zip_url):
-    return _build_ranking(comm_code, attr_id, year, n, zip_url)
+def _side_viz(comm_code, attr_id_str, year, n, commodity_key, use_imperial):
+    ctries = COUNTRY_UNIVERSE.get(commodity_key, list(COUNTRY_UNIVERSE["Corn"]))
+    return _build_ranking_viz(comm_code, attr_id_str, year, n, ctries, commodity_key, use_imperial)
 
 
 with c1:
-    prod_df = _side(COMM_CODES[commodity], ATTR_IDS["Production"], mkt_year, 8, zip_url)
+    prod_df = _side_viz(COMM_CODES[commodity], ATTR_IDS["Production"], mkt_year, 8, commodity, imperial)
     if not prod_df.empty:
         fig_p = go.Figure(go.Bar(
             x=prod_df["current"].tolist()[::-1],
@@ -396,7 +374,7 @@ with c1:
         st.plotly_chart(fig_p, use_container_width=True)
 
 with c2:
-    exp_df = _side(COMM_CODES[commodity], ATTR_IDS["Exports"], mkt_year, 8, zip_url)
+    exp_df = _side_viz(COMM_CODES[commodity], ATTR_IDS["Exports"], mkt_year, 8, commodity, imperial)
     if not exp_df.empty:
         fig_e = go.Figure(go.Bar(
             x=exp_df["current"].tolist()[::-1],
