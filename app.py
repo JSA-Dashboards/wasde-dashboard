@@ -25,7 +25,7 @@ st.set_page_config(
     page_title="JSA WASDE — Balance Sheet",
     page_icon="🌾",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="auto",
 )
 style.inject()
 
