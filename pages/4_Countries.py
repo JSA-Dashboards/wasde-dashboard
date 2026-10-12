@@ -12,6 +12,27 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+import pathlib
+import sys
+
+
+def _fresh_modules():
+    # Streamlit Cloud re-reads scripts on a push but keeps already-imported modules
+    # (db, style, ...), so pushed fixes to them don't run until a Reboot.
+    here = next(p for p in pathlib.Path(__file__).resolve().parents if (p / "style.py").exists())
+    seen = tuple(sorted((p.name, p.stat().st_mtime_ns) for p in here.glob("*.py")))
+    if getattr(sys, "_wasde_code", None) == seen:
+        return
+    for name, mod in list(sys.modules.items()):
+        path = getattr(mod, "__file__", None)
+        if name != "__main__" and path and pathlib.Path(path).resolve().parent == here:
+            sys.modules.pop(name, None)
+    st.cache_data.clear()
+    sys._wasde_code = seen
+
+
+_fresh_modules()
+
 import style
 from style import C_BLUE, C_GREEN, C_LIME, C_RED
 from units import convert, unit_label
