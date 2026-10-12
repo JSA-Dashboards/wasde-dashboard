@@ -224,7 +224,6 @@ for i, attr in enumerate(sel_attrs):
 fig.update_layout(**style.plot_layout(
     title=dict(text=f"{commodity} {mkt_year}/{str(mkt_year+1)[-2:]} — WASDE Revisions",
                font=dict(size=13)),
-    xaxis_title="WASDE Release Month",
     yaxis_title=ul,
     height=380,
 ))
