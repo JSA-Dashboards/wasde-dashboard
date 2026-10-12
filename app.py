@@ -82,15 +82,22 @@ def _http():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _get_latest_period() -> str:
+def _get_reporting_periods() -> tuple[str, str]:
+    """Return (current_period, prior_period) from the PSD reporting-periods list."""
     try:
         r = _http().get(f"{PSD_VIZ_BASE}/GetReportingPeriods", timeout=20)
         r.raise_for_status()
-        return r.json()[0]["value"]
+        periods = r.json()
+        latest = periods[0]["value"]
+        prior  = periods[1]["value"] if len(periods) > 1 else latest
+        return latest, prior
     except Exception:
         from datetime import datetime
         now = datetime.now()
-        return f"{now.year}{now.month:02d}"
+        cur = f"{now.year}{now.month:02d}"
+        prev_mo = now.month - 1 if now.month > 1 else 12
+        prev_yr = now.year if now.month > 1 else now.year - 1
+        return cur, f"{prev_yr}{prev_mo:02d}"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -161,7 +168,7 @@ def _ts(df: pd.DataFrame, attr_id: str) -> pd.Series:
 
 
 # ── Top control bar ───────────────────────────────────────────────────────────
-rp    = _get_latest_period()
+rp, rp_prior = _get_reporting_periods()
 rp_yr = int(rp[:4])
 all_years = list(range(rp_yr + 1, 2004, -1))
 
@@ -187,9 +194,11 @@ country_code = US_COUNTRY if region == "US" else WORLD_COUNTRY
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 with st.spinner("Loading PSD data…"):
-    raw = _fetch_balance_sheet(comm_code, country_code, rp)
-    df  = _parse_viz_response(raw)
-    df_hist = df[df["marketYear"] >= hist_from] if not df.empty else df
+    raw       = _fetch_balance_sheet(comm_code, country_code, rp)
+    raw_prior = _fetch_balance_sheet(comm_code, country_code, rp_prior)
+    df        = _parse_viz_response(raw)
+    df_prior  = _parse_viz_response(raw_prior)
+    df_hist   = df[df["marketYear"] >= hist_from] if not df.empty else df
 
 ul = unit_label(commodity, imperial)
 
@@ -237,10 +246,44 @@ with k6:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# ── Delta helpers ─────────────────────────────────────────────────────────────
+def _cvt(v):
+    return convert(v, commodity, imperial) if v is not None else None
+
+def _delta_lr(attr_id: str) -> float | None:
+    cur  = _cvt(_val(df,       attr_id, mkt_year))
+    prev = _cvt(_val(df_prior, attr_id, mkt_year))
+    return (cur - prev) if (cur is not None and prev is not None) else None
+
+def _delta_ly(attr_id: str) -> float | None:
+    cur  = _cvt(_val(df, attr_id, mkt_year))
+    prev = _cvt(_val(df, attr_id, mkt_year - 1))
+    return (cur - prev) if (cur is not None and prev is not None) else None
+
+def _delta_5ya(attr_id: str) -> float | None:
+    cur = _cvt(_val(df, attr_id, mkt_year))
+    if cur is None:
+        return None
+    vals = [_cvt(_val(df, attr_id, y)) for y in range(mkt_year - 5, mkt_year)]
+    valid = [v for v in vals if v is not None]
+    if not valid:
+        return None
+    return cur - sum(valid) / len(valid)
+
+def _fmt_delta(v: float | None) -> str:
+    return f"{v:+,.1f}" if v is not None else "—"
+
+DELTA_COLS = ["Δ LR", "Δ LY", "Δ 5YA"]
+
 # ── Two-column layout: balance sheet + charts ─────────────────────────────────
-col_bs, col_charts = st.columns([1, 1.7])
+col_bs, col_charts = st.columns([1.35, 1.7])
 
 with col_bs:
+    # derive the prior-period label for the caption
+    prior_yr  = int(rp_prior[:4])
+    prior_mo  = int(rp_prior[4:])
+    prior_lbl = pd.Timestamp(year=prior_yr, month=prior_mo, day=1).strftime("%b %Y")
+
     style.sec("Supply & Demand Balance Sheet")
 
     yrs_show = [y for y in [mkt_year-2, mkt_year-1, mkt_year]
@@ -252,6 +295,10 @@ with col_bs:
             fmt(_val(df, a, yr), commodity, imperial)
             for a in BALANCE_ORDER
         ]
+    bs_data["Δ LR"]  = [_fmt_delta(_delta_lr(a))  for a in BALANCE_ORDER]
+    bs_data["Δ LY"]  = [_fmt_delta(_delta_ly(a))  for a in BALANCE_ORDER]
+    bs_data["Δ 5YA"] = [_fmt_delta(_delta_5ya(a)) for a in BALANCE_ORDER]
+
     bs_df = pd.DataFrame(bs_data).set_index("Line Item")
 
     def _style_bs(s):
@@ -265,13 +312,32 @@ with col_bs:
                 styles.append("")
         return styles
 
-    st.dataframe(
-        bs_df.style.apply(_style_bs, axis=0)
-             .set_properties(**{"font-size": "0.86rem"}),
-        use_container_width=True,
-        height=360,
+    def _color_delta(val):
+        """Green for positive, red for negative delta cells."""
+        if not isinstance(val, str) or val == "—":
+            return ""
+        try:
+            n = float(val.replace(",", ""))
+            if n > 0:
+                return f"color:{C_GREEN};font-weight:600"
+            if n < 0:
+                return f"color:{C_RED};font-weight:600"
+        except ValueError:
+            pass
+        return ""
+
+    styled = (
+        bs_df.style
+             .apply(_style_bs, axis=0)
+             .applymap(_color_delta, subset=DELTA_COLS)
+             .set_properties(**{"font-size": "0.85rem"})
     )
-    st.caption(f"Units: {ul}  ·  Source: USDA FAS PSD")
+
+    st.dataframe(styled, use_container_width=True, height=360)
+    st.caption(
+        f"Units: {ul}  ·  Source: USDA FAS PSD  ·  "
+        f"Δ LR = vs {prior_lbl} WASDE  ·  Δ LY = vs prior year  ·  Δ 5YA = vs 5-yr avg"
+    )
 
 with col_charts:
     prod_ts   = _ts(df_hist, "28")
