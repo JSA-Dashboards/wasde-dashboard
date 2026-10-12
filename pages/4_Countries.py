@@ -309,7 +309,9 @@ with col_table:
     style.sec("Ranking Table")
 
     def _fmt_d(v):
-        return f"{v:+,.1f}" if v is not None else "—"
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "—"
+        return f"{v:+,.1f}"
 
     def _color_delta(val):
         if not isinstance(val, str) or val == "—":
