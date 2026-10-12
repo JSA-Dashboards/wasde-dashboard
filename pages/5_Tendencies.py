@@ -129,7 +129,7 @@ if not rev_ser.empty:
     delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
     st.dataframe(
         summary.style
-               .applymap(_color_delta, subset=delta_cols)
+               .map(_color_delta, subset=delta_cols)
                .set_properties(**{"font-size": "0.86rem"}),
         use_container_width=True,
         height=88,
@@ -198,7 +198,7 @@ def _color_avg(val):
 
 st.dataframe(
     disp.style
-        .applymap(_color_avg, subset=["Avg Revision"])
+        .map(_color_avg, subset=["Avg Revision"])
         .format({
             "Avg Revision": "{:+,.1f}",
             "Std Dev": "{:,.1f}",

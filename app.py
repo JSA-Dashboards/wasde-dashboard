@@ -329,7 +329,7 @@ with col_bs:
     styled = (
         bs_df.style
              .apply(_style_bs, axis=0)
-             .applymap(_color_delta, subset=DELTA_COLS)
+             .map(_color_delta, subset=DELTA_COLS)
              .set_properties(**{"font-size": "0.85rem"})
     )
 

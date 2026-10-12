@@ -162,7 +162,7 @@ if delta_rows:
     delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
     st.dataframe(
         delta_df.style
-                .applymap(_color_delta, subset=delta_cols)
+                .map(_color_delta, subset=delta_cols)
                 .set_properties(**{"font-size": "0.86rem"}),
         use_container_width=True,
         height=min(52 + len(delta_rows) * 36, 360),

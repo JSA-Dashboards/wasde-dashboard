@@ -323,7 +323,7 @@ with col_table:
     delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
     st.dataframe(
         tbl.style
-           .applymap(_color_delta, subset=delta_cols)
+           .map(_color_delta, subset=delta_cols)
            .set_properties(**{"font-size": "0.85rem"}),
         use_container_width=True,
         hide_index=True,
