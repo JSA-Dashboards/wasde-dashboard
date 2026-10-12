@@ -97,6 +97,91 @@ def _month_label(row):
 
 filt["month_label"] = filt.apply(_month_label, axis=1)
 
+# ── Delta summary table ───────────────────────────────────────────────────────
+style.sec("Current Estimates vs Prior WASDE, Prior Year & 5-Year Avg")
+
+# Latest estimate + Δ LR from revision series (already loaded)
+latest_rows = (filt.sort_values("release_ym")
+                   .groupby("attribute_name")
+                   .last()
+                   .reset_index())
+
+# Latest balance sheets for prior years (Δ LY + Δ 5YA)
+@st.cache_data(ttl=3600, show_spinner=False)
+def _bs(commodity, year, country):
+    return db.latest_balance_sheet(commodity, year, country)
+
+bs_ly = _bs(commodity, mkt_year - 1, country)
+ly_map = (bs_ly.set_index("attribute_name")["value"].to_dict()
+          if not bs_ly.empty else {})
+
+five_yr_maps = {}
+for y in range(mkt_year - 5, mkt_year):
+    bs_y = _bs(commodity, y, country)
+    if not bs_y.empty:
+        five_yr_maps[y] = bs_y.set_index("attribute_name")["value"].to_dict()
+
+def _fmt_d(v):
+    return f"{v:+,.1f}" if v is not None else "—"
+
+def _color_delta(val):
+    if not isinstance(val, str) or val == "—":
+        return ""
+    try:
+        n = float(val.replace(",", ""))
+        if n > 0: return f"color:{C_GREEN};font-weight:600"
+        if n < 0: return f"color:{C_RED};font-weight:600"
+    except ValueError:
+        pass
+    return ""
+
+delta_rows = []
+for attr in sel_attrs:
+    row = latest_rows[latest_rows["attribute_name"] == attr]
+    if row.empty:
+        continue
+    cur_raw = float(row["value"].values[0])
+    rev_raw = row["revision"].values[0]
+    cur_c   = convert(cur_raw, commodity, imperial)
+
+    delta_lr  = convert(rev_raw, commodity, imperial) if rev_raw is not None and str(rev_raw) != "nan" else None
+    ly_raw    = ly_map.get(attr)
+    delta_ly  = (cur_c - convert(ly_raw, commodity, imperial)) if ly_raw is not None else None
+
+    five_vals = [convert(m.get(attr), commodity, imperial)
+                 for m in five_yr_maps.values() if m.get(attr) is not None]
+    delta_5ya = (cur_c - sum(five_vals) / len(five_vals)) if five_vals else None
+
+    # which WASDE month is this?
+    last_mo = int(row["release_month"].values[0])
+    last_yr = int(row["release_year"].values[0])
+    delta_rows.append({
+        "Attribute":     attr,
+        f"Current ({ul})": f"{cur_c:,.1f}",
+        "Δ LR":          _fmt_d(delta_lr),
+        "Δ LY":          _fmt_d(delta_ly),
+        "Δ 5YA":         _fmt_d(delta_5ya),
+    })
+
+if delta_rows:
+    import pandas as pd
+    delta_df = pd.DataFrame(delta_rows).set_index("Attribute")
+    delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
+    st.dataframe(
+        delta_df.style
+                .applymap(_color_delta, subset=delta_cols)
+                .set_properties(**{"font-size": "0.86rem"}),
+        use_container_width=True,
+        height=min(52 + len(delta_rows) * 36, 400),
+    )
+    last_mo_lbl = MONTH_LABELS.get(last_mo, str(last_mo))
+    st.caption(
+        f"Units: {ul}  ·  "
+        f"Δ LR = revision in {last_mo_lbl} {last_yr} WASDE  ·  "
+        f"Δ LY = vs {mkt_year-1}/{str(mkt_year)[-2:]}  ·  "
+        f"Δ 5YA = vs {mkt_year-5}–{mkt_year-1} avg"
+    )
+
 # ── Progression line chart ────────────────────────────────────────────────────
 style.sec("Estimate Progression by WASDE Release Month")
 fig = go.Figure()
