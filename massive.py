@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import os
+from datetime import date, timedelta
 import requests
 import streamlit as st
 
@@ -60,22 +61,30 @@ def front_month_price(commodity: str) -> tuple[float | None, str | None]:
         return None, None
 
     try:
-        # Get active contracts for this product
-        r = _session().get(
-            f"{MASSIVE_BASE}/contracts",
-            params={"product_code": product_code, "limit": 50},
-            timeout=15,
-        )
-        r.raise_for_status()
-        contracts = r.json().get("results", [])
+        # /contracts only lists a date Massive has published: step back from today
+        contracts = []
+        for back in range(6):
+            day = (date.today() - timedelta(days=back)).isoformat()
+            r = _session().get(
+                f"{MASSIVE_BASE}/contracts",
+                params={"product_code": product_code, "active": "true",
+                        "date": day, "limit": 400},
+                timeout=15,
+            )
+            r.raise_for_status()
+            contracts = r.json().get("results", [])
+            if contracts:
+                break
 
-        # Keep only single-month outrights, sort by expiration
+        # Keep only single-month outrights not yet expired, nearest first
+        today = date.today().isoformat()
         outrights = []
         for c in contracts:
             ticker = c.get("ticker", "")
             if _OUTRIGHT_RE.match(ticker):
-                exp = c.get("expiration_date") or c.get("last_trade_date") or ""
-                outrights.append((exp, ticker))
+                exp = c.get("settlement_date") or c.get("last_trade_date") or ""
+                if exp and exp >= today:
+                    outrights.append((exp, ticker))
 
         if not outrights:
             return None, None
