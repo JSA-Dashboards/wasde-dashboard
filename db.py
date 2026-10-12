@@ -101,7 +101,7 @@ def latest_balance_sheet(commodity: str, market_year: int,
                          country_code: str = "0000US") -> pd.DataFrame:
     """Latest-vintage balance sheet rows for one commodity × year × country."""
     return _query("""
-        SELECT attribute_name, value, unit
+        SELECT attribute_name, value
         FROM JSA.WASDE.LATEST
         WHERE commodity    = %s
           AND market_year  = %s

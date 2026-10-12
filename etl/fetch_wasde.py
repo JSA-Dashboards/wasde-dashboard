@@ -46,35 +46,27 @@ COMMODITIES = {
     "Soybean Oil":  "4232000",
 }
 
-# Country codes to capture per commodity
+# label -> (stored country_code, PSD API countryCode). Stored codes match what db.py/pages query.
 COUNTRIES = {
-    "US":    "US",     # United States
-    "World": "00",     # All Countries aggregate
+    "US":    ("0000US",    "US"),
+    "World": ("0000World", "00"),
 }
 
-# PSD attribute IDs we care about
-WANTED_ATTR_IDS = {
-    "4",   "7",   "20",  "28",  "40",
-    "57",  "58",  "88",  "125", "154",
-    "166", "176", "185", "203",
-}
-# Friendly name overrides (API names have trailing spaces)
+# Real PSD attribute IDs (API names have trailing spaces; names below match db.py/app queries)
 ATTR_NAMES = {
     "4":   "Area Harvested",
-    "7":   "Yield",
     "20":  "Beginning Stocks",
     "28":  "Production",
-    "40":  "Imports",
-    "57":  "Feed/Residual Use",
-    "58":  "Food/Seed/Industrial Use",
+    "57":  "Imports",
+    "86":  "Total Supply",
     "88":  "Exports",
-    "125": "Total Supply",
-    "154": "Yield",
-    "166": "Area Harvested",
+    "125": "Total Consumption",
+    "130": "Feed/Residual Use",
     "176": "Ending Stocks",
-    "185": "Total Use",
-    "203": "Season Avg Price",
+    "184": "Yield",
+    "192": "Food/Seed/Industrial Use",
 }
+WANTED_ATTR_IDS = set(ATTR_NAMES)
 
 REGION_CODE = "R00"   # World region (covers all country queries)
 ATTRIBUTE_ID_HINT = "4"  # any valid attribute; API ignores it for GetAllAttributeData
@@ -193,6 +185,14 @@ def build_rows(data: dict, commodity: str, country_label: str,
                 value,
             ))
 
+    # PSD has no Total Use attribute: derive it as Total Consumption (125) + Exports (88)
+    by_key = {(r[2], r[6]): r[8] for r in rows}
+    for myr in sorted({r[2] for r in rows}):
+        cons, exp = by_key.get((myr, "125")), by_key.get((myr, "88"))
+        if cons is not None and exp is not None:
+            rows.append((release_year, release_month, myr, commodity, country_code,
+                         country_label, "185", "Total Use", cons + exp))
+
     return rows
 
 
@@ -307,12 +307,12 @@ def main():
         ry, rm = parse_rp(rp)
         print(f"\n[{rp}] release {ry}-{rm:02d}")
         for commodity, comm_code in COMMODITIES.items():
-            for country_label, country_code in COUNTRIES.items():
+            for country_label, (stored_code, api_code) in COUNTRIES.items():
                 print(f"  {commodity} / {country_label}…", end=" ", flush=True)
                 try:
-                    data = fetch_balance_sheet(sess, comm_code, country_code, rp)
-                    rows = build_rows(data, commodity, country_label, country_code, ry, rm)
-                    n = upsert(conn, rows, ry, rm, commodity, country_code,
+                    data = fetch_balance_sheet(sess, comm_code, api_code, rp)
+                    rows = build_rows(data, commodity, country_label, stored_code, ry, rm)
+                    n = upsert(conn, rows, ry, rm, commodity, stored_code,
                                dry_run=args.dry_run)
                     print(f"{n} rows")
                     total_rows += n
