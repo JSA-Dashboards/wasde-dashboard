@@ -56,12 +56,12 @@ def plot_layout(**overrides) -> dict:
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
         font=dict(color=TEXT, family="Source Sans 3, Source Sans Pro, sans-serif", size=12),
-        margin=dict(l=10, r=10, t=36, b=10),
+        margin=dict(l=10, r=10, t=40, b=55),
         xaxis=dict(**_AXIS),
         yaxis=dict(**_AXIS),
         legend=dict(
             bgcolor="rgba(0,0,0,0)", font=dict(size=11, color=TEXT_MUTED),
-            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+            orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5,
         ),
         hovermode="x unified",
     )
@@ -90,7 +90,6 @@ html, body, p, span, div, label, button, td, th {{
 }}
 .block-container {{ padding-top: 2rem; max-width: 1400px; }}
 #MainMenu, footer, .stDeployButton {{ visibility: hidden; }}
-[data-testid="stSidebar"] {{ display: none !important; }}
 
 /* ── Header ── */
 .dash-header {{

@@ -170,7 +170,10 @@ def _ts(df: pd.DataFrame, attr_id: str) -> pd.Series:
 # ── Top control bar ───────────────────────────────────────────────────────────
 rp, rp_prior = _get_reporting_periods()
 rp_yr = int(rp[:4])
+# rp_yr is the year of the latest WASDE (e.g. 2026 for the Oct-2026 report which
+# covers the 2026/27 marketing year).  Include one future year so users can look ahead.
 all_years = list(range(rp_yr + 1, 2004, -1))
+default_year_idx = 1  # index 1 = rp_yr (the actual current marketing year)
 
 st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
 _c1, _c2, _c3, _c4, _c5 = st.columns([2, 1, 1, 1, 1])
@@ -181,7 +184,7 @@ with _c2:
 with _c3:
     imperial = st.toggle("Million bu", value=False)
 with _c4:
-    mkt_year = st.selectbox("Mkt Year", all_years, index=0,
+    mkt_year = st.selectbox("Mkt Year", all_years, index=default_year_idx,
                              format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
 with _c5:
     hist_from = st.selectbox("History from", list(range(2005, mkt_year + 1)),
@@ -364,7 +367,7 @@ with col_charts:
             yaxis=dict(title=ul, gridcolor=style.BORDER),
             yaxis2=dict(title="Ending Stocks", overlaying="y", side="right",
                         gridcolor="rgba(0,0,0,0)", zeroline=False),
-            height=310,
+            height=330,
         )
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -400,7 +403,7 @@ with u1:
         title=dict(text="Use Components (stacked)", font=dict(size=13)),
         barmode="stack",
         yaxis=dict(title=ul, gridcolor=style.BORDER),
-        height=280,
+        height=300,
     ))
     st.plotly_chart(fig3, use_container_width=True)
 
