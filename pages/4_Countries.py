@@ -1,8 +1,11 @@
 """
 Page 4 — Country View
 Top producers, exporters, importers by commodity.
-Always fetches live from the USDA FAS PSD bulk API (Snowflake only stores US + World).
+Bulk API  → ranking + Δ LY + Δ 5YA (all countries, latest vintage only).
+Viz API   → Δ LR per top-N country (current vs prior WASDE reporting period).
 """
+
+import re
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -32,6 +35,7 @@ COMM_CODES = {
     "Soybean Oil": "4232000",
 }
 
+# Integer attr IDs used by the bulk API; string forms match the viz API response
 ATTR_IDS = {
     "Production":    28,
     "Exports":       88,
@@ -42,7 +46,8 @@ ATTR_IDS = {
 
 WORLD_CODES = {"0000US", "00World", "World", "00", "0000WO", "WorldTotal"}
 
-PSD_BULK = "https://apps.fas.usda.gov/psdonline/api/data/get"
+PSD_BULK     = "https://apps.fas.usda.gov/psdonline/api/data/get"
+PSD_VIZ_BASE = "https://apps.fas.usda.gov/PSDOnlineApi/api/CompositeVisualization"
 
 # ── Controls ──────────────────────────────────────────────────────────────────
 st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
@@ -76,30 +81,50 @@ st.markdown(
 st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsafe_allow_html=True)
 
 
-# ── Data ──────────────────────────────────────────────────────────────────────
+# ── Reporting periods ─────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_periods() -> tuple[str, str]:
+    try:
+        r = requests.get(f"{PSD_VIZ_BASE}/GetReportingPeriods", timeout=20,
+                         headers={"User-Agent": "JPSI-WASDE/1.0"})
+        r.raise_for_status()
+        periods = r.json()
+        latest = periods[0]["value"]
+        prior  = periods[1]["value"] if len(periods) > 1 else latest
+        return latest, prior
+    except Exception:
+        from datetime import datetime
+        now = datetime.now()
+        cur = f"{now.year}{now.month:02d}"
+        pm  = now.month - 1 if now.month > 1 else 12
+        py  = now.year if now.month > 1 else now.year - 1
+        return cur, f"{py}{pm:02d}"
+
+
+rp, rp_prior = _get_periods()
+prior_yr  = int(rp_prior[:4])
+prior_mo  = int(rp_prior[4:])
+prior_lbl = pd.Timestamp(year=prior_yr, month=prior_mo, day=1).strftime("%b %Y")
+
+
+# ── Bulk API: ranking + Δ LY + Δ 5YA ─────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_psd(comm_code: str) -> pd.DataFrame:
-    """All years/countries/attributes for one commodity from the PSD bulk API."""
     try:
-        resp = requests.get(
-            PSD_BULK,
-            params={"commodityCode": comm_code},
-            timeout=90,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
+        resp = requests.get(PSD_BULK, params={"commodityCode": comm_code},
+                            timeout=90, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
         data = resp.json()
         if not data:
             return pd.DataFrame()
         df = pd.DataFrame(data)
         df.columns = [c.lower() for c in df.columns]
-        # Normalize key column names
         df = df.rename(columns={
-            next((c for c in df.columns if "attributeid"  in c), "attributeid"):  "attr_id",
-            next((c for c in df.columns if "marketyear"   in c), "marketyear"):   "market_year",
-            next((c for c in df.columns if "countrycode"  == c), "countrycode"):  "country_code",
-            next((c for c in df.columns if "countryname"  == c), "countryname"):  "country_name",
-            next((c for c in df.columns if c == "value"),         "value"):        "value",
+            next((c for c in df.columns if "attributeid" in c), "attributeid"): "attr_id",
+            next((c for c in df.columns if "marketyear"  in c), "marketyear"):  "market_year",
+            next((c for c in df.columns if c == "countrycode"), "countrycode"): "country_code",
+            next((c for c in df.columns if c == "countryname"), "countryname"): "country_name",
+            next((c for c in df.columns if c == "value"),       "value"):       "value",
         }, errors="ignore")
         for col in ("attr_id", "market_year", "value"):
             if col in df.columns:
@@ -110,10 +135,6 @@ def _fetch_psd(comm_code: str) -> pd.DataFrame:
 
 
 def _build_ranking(comm_code: str, attr_id: int, year: int, n: int) -> pd.DataFrame:
-    """
-    Return top-N countries for `year` with Δ LY and Δ 5YA columns.
-    All three values are drawn from the same bulk API call (latest vintage only).
-    """
     raw = _fetch_psd(comm_code)
     if raw.empty or "attr_id" not in raw.columns:
         return pd.DataFrame()
@@ -126,14 +147,10 @@ def _build_ranking(comm_code: str, attr_id: int, year: int, n: int) -> pd.DataFr
     sub = sub[~sub["country_code"].isin(WORLD_CODES)]
     sub = sub.dropna(subset=["market_year", "value"])
 
-    # Wide pivot: country → year → value
-    pivot = sub.pivot_table(
-        index=["country_code", "country_name"] if "country_name" in sub.columns
-              else ["country_code"],
-        columns="market_year",
-        values="value",
-        aggfunc="first",
-    )
+    idx_cols = (["country_code", "country_name"]
+                if "country_name" in sub.columns else ["country_code"])
+    pivot = sub.pivot_table(index=idx_cols, columns="market_year",
+                            values="value", aggfunc="first")
 
     if year not in pivot.columns:
         return pd.DataFrame()
@@ -142,34 +159,103 @@ def _build_ranking(comm_code: str, attr_id: int, year: int, n: int) -> pd.DataFr
     cur = cur[cur > 0].nlargest(n)
 
     rows = []
-    for (code, *name_parts), val in cur.items():
-        cname = name_parts[0] if name_parts else code
+    for idx_key, val in cur.items():
+        if isinstance(idx_key, tuple):
+            code, cname = idx_key[0], idx_key[1] if len(idx_key) > 1 else idx_key[0]
+        else:
+            code, cname = idx_key, idx_key
 
         cur_c = convert(val, commodity, imperial)
 
-        # Δ LY
-        ly_val = pivot.loc[(code, *name_parts), year - 1] if (year - 1) in pivot.columns else None
-        delta_ly = (cur_c - convert(ly_val, commodity, imperial)) if ly_val is not None and not pd.isna(ly_val) else None
+        ly_val = pivot.loc[idx_key, year - 1] if (year - 1) in pivot.columns else None
+        delta_ly = (cur_c - convert(ly_val, commodity, imperial)) \
+            if (ly_val is not None and not pd.isna(ly_val)) else None
 
-        # Δ 5YA: average of the 5 years before mkt_year
         five_yr_cols = [y for y in range(year - 5, year) if y in pivot.columns]
-        five_yr_vals = [convert(pivot.loc[(code, *name_parts), y], commodity, imperial)
-                        for y in five_yr_cols
-                        if not pd.isna(pivot.loc[(code, *name_parts), y])]
+        five_yr_vals = [convert(pivot.loc[idx_key, y], commodity, imperial)
+                        for y in five_yr_cols if not pd.isna(pivot.loc[idx_key, y])]
         delta_5ya = (cur_c - sum(five_yr_vals) / len(five_yr_vals)) if five_yr_vals else None
 
         rows.append({
             "country_code": code,
             "country_name": cname,
             "current":      cur_c,
+            "delta_lr":     None,   # filled in below
             "delta_ly":     delta_ly,
             "delta_5ya":    delta_5ya,
-            "_raw":         val,  # for bar chart (pre-convert)
         })
 
     return pd.DataFrame(rows)
 
 
+# ── Viz API: Δ LR per country ─────────────────────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_viz(comm_code: str, country_code: str, period: str) -> dict:
+    try:
+        r = requests.post(
+            f"{PSD_VIZ_BASE}/GetAllAttributeData",
+            json={
+                "reportingPeriod":       period,
+                "reportingCutoffPeriod": None,
+                "commodityCode":         comm_code,
+                "regionCode":            "R00",
+                "countryCode":           country_code,
+                "attributeId":           "4",
+            },
+            timeout=30,
+            headers={"User-Agent": "JPSI-WASDE/1.0"},
+        )
+        r.raise_for_status()
+        return r.json() or {}
+    except Exception:
+        return {}
+
+
+def _parse_attr_value(data: dict, attr_id_str: str, year: int) -> float | None:
+    """Extract one attribute+year value from a GetAllAttributeData response."""
+    headers = data.get("headerValues", [])
+    for attr in data.get("attributeValues", []):
+        if str(attr.get("attributeId", "")).strip() != attr_id_str:
+            continue
+        vals = attr.get("attributeValues", [])
+        for col_i, hdr in enumerate(headers[1:]):
+            if col_i in (1, 2):
+                continue
+            m = re.match(r"(\d{2})/\d{2}", hdr.strip())
+            if not m or col_i >= len(vals):
+                continue
+            myr = 2000 + int(m.group(1))
+            if myr != year:
+                continue
+            raw = vals[col_i]
+            if raw is None or raw == "":
+                return None
+            try:
+                return float(str(raw).split("(")[0].strip().replace(",", ""))
+            except ValueError:
+                return None
+    return None
+
+
+def _add_delta_lr(rank_df: pd.DataFrame, comm_code: str,
+                  attr_id: int, year: int) -> pd.DataFrame:
+    """Fetch prior-period viz data for each country and compute Δ LR."""
+    if rank_df.empty or rp == rp_prior:
+        return rank_df
+
+    attr_id_str = str(attr_id)
+    for i, row in rank_df.iterrows():
+        cc   = row["country_code"]
+        data = _fetch_viz(comm_code, cc, rp_prior)
+        prior_val = _parse_attr_value(data, attr_id_str, year)
+        if prior_val is not None:
+            prior_c = convert(prior_val, commodity, imperial)
+            rank_df.at[i, "delta_lr"] = row["current"] - prior_c
+
+    return rank_df
+
+
+# ── Load data ─────────────────────────────────────────────────────────────────
 with st.spinner("Loading country data from USDA FAS…"):
     rank_df = _build_ranking(COMM_CODES[commodity], ATTR_IDS[attr_choice], mkt_year, top_n)
 
@@ -181,7 +267,12 @@ if rank_df.empty:
     )
     st.stop()
 
-# ── Two-panel layout: chart left, ranking table right ─────────────────────────
+with st.spinner(f"Fetching {prior_lbl} WASDE for Δ LR…"):
+    rank_df = _add_delta_lr(rank_df, COMM_CODES[commodity],
+                            ATTR_IDS[attr_choice], mkt_year)
+
+
+# ── Layout: chart left, ranking table right ───────────────────────────────────
 col_chart, col_table = st.columns([1.1, 1])
 
 with col_chart:
@@ -221,25 +312,30 @@ with col_table:
             pass
         return ""
 
-    tbl = rank_df[["country_name", "current", "delta_ly", "delta_5ya"]].copy()
+    tbl = rank_df[["country_name", "current", "delta_lr", "delta_ly", "delta_5ya"]].copy()
     tbl.insert(0, "#", range(1, len(tbl) + 1))
     tbl["current"]   = tbl["current"].map(lambda v: f"{v:,.1f}")
+    tbl["delta_lr"]  = tbl["delta_lr"].map(_fmt_d)
     tbl["delta_ly"]  = tbl["delta_ly"].map(_fmt_d)
     tbl["delta_5ya"] = tbl["delta_5ya"].map(_fmt_d)
-    tbl.columns = ["#", "Country", f"Current ({ul})", "Δ LY", "Δ 5YA"]
+    tbl.columns = ["#", "Country", f"Current ({ul})", "Δ LR", "Δ LY", "Δ 5YA"]
 
+    delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
     st.dataframe(
         tbl.style
-           .applymap(_color_delta, subset=["Δ LY", "Δ 5YA"])
+           .applymap(_color_delta, subset=delta_cols)
            .set_properties(**{"font-size": "0.85rem"}),
         use_container_width=True,
         hide_index=True,
-        height=max(340, top_n * 36 + 40),
+        height=max(360, top_n * 36 + 40),
     )
     st.caption(
-        f"Units: {ul}  ·  Source: USDA FAS PSD (latest vintage)  ·  "
-        f"Δ LY = vs {mkt_year-1}/{str(mkt_year)[-2:]}  ·  Δ 5YA = vs {mkt_year-5}–{mkt_year-1} avg"
+        f"Units: {ul}  ·  Source: USDA FAS PSD  ·  "
+        f"Δ LR = vs {prior_lbl} WASDE  ·  "
+        f"Δ LY = vs {mkt_year-1}/{str(mkt_year)[-2:]}  ·  "
+        f"Δ 5YA = vs {mkt_year-5}–{mkt_year-1} avg"
     )
+
 
 # ── Side-by-side: producers vs exporters ──────────────────────────────────────
 style.sec("Production vs Exports")
