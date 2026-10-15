@@ -59,17 +59,34 @@ def _conn():
         kw["private_key"] = pk
     else:
         kw["password"] = _env("SNOWFLAKE_PASSWORD")
+    kw["client_session_keep_alive"] = True
     return snowflake.connector.connect(**kw)
 
 
+def _execute(sql: str, params: tuple, fetch: bool):
+    """Run a statement; if the cached session has expired, reconnect and retry once."""
+    import snowflake.connector
+
+    for attempt in (0, 1):
+        cur = None
+        try:
+            cur = _conn().cursor()
+            cur.execute(sql, params)
+            if not fetch:
+                return None
+            cols = [d[0].lower() for d in cur.description]
+            return pd.DataFrame(cur.fetchall(), columns=cols)
+        except snowflake.connector.errors.Error:
+            if attempt:
+                raise
+            _conn.clear()
+        finally:
+            if cur is not None:
+                cur.close()
+
+
 def _query(sql: str, params: tuple = ()) -> pd.DataFrame:
-    cur = _conn().cursor()
-    try:
-        cur.execute(sql, params)
-        cols = [d[0].lower() for d in cur.description]
-        return pd.DataFrame(cur.fetchall(), columns=cols)
-    finally:
-        cur.close()
+    return _execute(sql, params, fetch=True)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -233,11 +250,7 @@ def bage_estimates() -> pd.DataFrame:
 
 
 def _write(sql: str, params: tuple) -> None:
-    cur = _conn().cursor()
-    try:
-        cur.execute(sql, params)
-    finally:
-        cur.close()
+    _execute(sql, params, fetch=False)
     bage_estimates.clear()
 
 
