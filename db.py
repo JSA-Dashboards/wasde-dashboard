@@ -240,31 +240,32 @@ def magyp_series(crop: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def bage_estimates() -> pd.DataFrame:
-    """BAGE (Bolsa de Cereales de Buenos Aires) estimates, typed in by hand."""
+def agency_estimates(country: str) -> pd.DataFrame:
+    """Crop estimates from agencies with no automated feed (BAGE, BCR, UGA, SovEcon, ABARES, ...), typed in by hand."""
     return _query("""
-        SELECT id, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note
-        FROM JSA.WASDE.BAGE_ESTIMATES
+        SELECT id, country, agency, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note
+        FROM JSA.WASDE.AGENCY_ESTIMATES
+        WHERE country = %s
         ORDER BY report_date DESC, id DESC
-    """)
+    """, (country,))
 
 
 def _write(sql: str, params: tuple) -> None:
     _execute(sql, params, fetch=False)
-    bage_estimates.clear()
+    agency_estimates.clear()
 
 
-def bage_add(crop: str, campaign: str, report_date, planted_mha, production_mmt,
-             yield_tha, note: str) -> None:
+def agency_add(country: str, agency: str, crop: str, campaign: str, report_date,
+               planted_mha, production_mmt, yield_tha, note: str) -> None:
     _write("""
-        INSERT INTO JSA.WASDE.BAGE_ESTIMATES
-            (crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note or None))
+        INSERT INTO JSA.WASDE.AGENCY_ESTIMATES
+            (country, agency, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (country, agency, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note or None))
 
 
-def bage_delete(row_id: int) -> None:
-    _write("DELETE FROM JSA.WASDE.BAGE_ESTIMATES WHERE id = %s", (int(row_id),))
+def agency_delete(row_id: int) -> None:
+    _write("DELETE FROM JSA.WASDE.AGENCY_ESTIMATES WHERE id = %s", (int(row_id),))
 
 
 def snowflake_available() -> bool:

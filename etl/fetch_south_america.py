@@ -9,8 +9,9 @@ Usage:
 CONAB: historical-series workbooks (area / yield / production by region and state).
   Site licence CC BY-ND 3.0 - show with attribution, don't republish adapted files.
 MAGyP: official Argentine estimates CSV (CC BY 4.0), aggregated here to province level.
-BAGE (Bolsa de Cereales de Buenos Aires) has no automated feed (bot-protected site):
-  its numbers are typed in on the page and live in JSA.WASDE.BAGE_ESTIMATES.
+Agency estimates with no automated feed (BAGE and BCR for Argentina, UGA/ministry/UkrAgroConsult for
+Ukraine, SovEcon/IKAR for Russia, ABARES for Australia - their sites are bot-protected or only publish
+reports) are typed in on the Origins page and live in JSA.WASDE.AGENCY_ESTIMATES.
 """
 
 from __future__ import annotations
@@ -52,14 +53,15 @@ DDL = [
         crop VARCHAR, campania VARCHAR, start_year INTEGER, provincia VARCHAR,
         planted_ha FLOAT, harvested_ha FLOAT, production_t FLOAT,
         loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
-    """CREATE TABLE IF NOT EXISTS JSA.WASDE.BAGE_ESTIMATES (
-        id INTEGER AUTOINCREMENT, crop VARCHAR NOT NULL, campaign VARCHAR NOT NULL,
+    """CREATE TABLE IF NOT EXISTS JSA.WASDE.AGENCY_ESTIMATES (
+        id INTEGER AUTOINCREMENT, country VARCHAR NOT NULL, agency VARCHAR NOT NULL,
+        crop VARCHAR NOT NULL, campaign VARCHAR NOT NULL,
         report_date DATE NOT NULL, planted_mha FLOAT, production_mmt FLOAT,
         yield_tha FLOAT, note VARCHAR,
         entered_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
     "GRANT SELECT ON TABLE JSA.WASDE.CONAB_SERIES TO ROLE WASDE_ROLE",
     "GRANT SELECT ON TABLE JSA.WASDE.MAGYP_SERIES TO ROLE WASDE_ROLE",
-    "GRANT SELECT, INSERT, DELETE ON TABLE JSA.WASDE.BAGE_ESTIMATES TO ROLE WASDE_ROLE",
+    "GRANT SELECT, INSERT, DELETE ON TABLE JSA.WASDE.AGENCY_ESTIMATES TO ROLE WASDE_ROLE",
     "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.CONAB_SERIES TO ROLE WASDE_ETL_ROLE",
     "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.MAGYP_SERIES TO ROLE WASDE_ETL_ROLE",
 ]

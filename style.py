@@ -222,7 +222,7 @@ _NAV_PAGES = [
     ("pages/3_Bucket_Trends",  "📊 Bucket Trends"),
     ("pages/4_Countries",      "🌍 Countries"),
     ("pages/5_Tendencies",     "🔍 Tendencies"),
-    ("pages/7_South_America",  "🌎 S. America"),
+    ("pages/7_Origins",        "🌎 Origins"),
     ("pages/6_Ask_AI",         "🤖 Ask AI"),
 ]
 
