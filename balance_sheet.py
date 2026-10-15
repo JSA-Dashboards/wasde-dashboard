@@ -46,7 +46,7 @@ ATTR_FOR = {
     "area_planted": 1, "area_harvested": 4, "yield": 184, "beginning_stocks": 20, "production": 28,
     "imports": 57, "total_supply": 86, "crush": 7, "feed": 130, "feed_waste": 161, "food_use": 149,
     "fsi": 192, "industrial": 140, "loss": 150, "exports": 88, "ending_stocks": 176,
-    "dom125": 125, "dom142": 142,
+    "dom125": 125, "dom142": 142, "dom126": 126,
 }
 
 # WASDE snapshot attribute name -> basic row key (used for the change-vs-last-report view)
@@ -87,6 +87,8 @@ def basics(df: pd.DataFrame) -> pd.DataFrame:
 def derive(b: pd.DataFrame) -> pd.DataFrame:
     """Add domestic consumption, total use, stocks-to-use and a computed yield where USDA has none."""
     n = b.copy()
+    if "dom125" not in n and "dom126" in n:          # sugar: Domestic Consumption is attribute 126
+        n["dom125"] = n["dom126"]
     if "dom125" in n:
         n["domestic"] = n["dom125"]
     elif "dom142" in n:
@@ -99,7 +101,7 @@ def derive(b: pd.DataFrame) -> pd.DataFrame:
         n["yield"] = n["production"] / n["area_harvested"].where(n["area_harvested"] > 0)
     if "dom125" not in n and "dom142" in n:          # cotton: consumption is reported as 'Domestic Use'
         n["mill_use"] = n["dom142"]
-    return n.drop(columns=[c for c in ("dom125", "dom142") if c in n])
+    return n.drop(columns=[c for c in ("dom125", "dom126", "dom142") if c in n])
 
 
 def previous_vintage(b: pd.DataFrame, rev: pd.DataFrame, units: pd.Series) -> pd.DataFrame:
