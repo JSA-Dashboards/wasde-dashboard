@@ -1,21 +1,17 @@
 """
-JSA WASDE Dashboard — main entry point (Balance Sheet page).
+JSA WASDE Dashboard — Balance Sheet page (full USDA PSD history).
 
 Multi-page app: this file = Page 1. Additional pages live in pages/.
+History comes from JSA.WASDE.PSD_HISTORY, loaded by etl/fetch_psd_history.py.
 """
-
-import os
-from pathlib import Path
-
-import pandas as pd
-import plotly.graph_objects as go
-import requests
-import streamlit as st
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 import pathlib
 import sys
+from datetime import date
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
 
 
 def _fresh_modules():
@@ -35,13 +31,13 @@ def _fresh_modules():
 
 _fresh_modules()
 
-import db
-import massive
-import style
-from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_RED, SERIES_COLORS
-from units import convert, fmt, unit_label
+import balance_sheet as bs  # noqa: E402
+import db  # noqa: E402
+import massive  # noqa: E402
+import psd_meta as pm  # noqa: E402
+import style  # noqa: E402
+from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_RED  # noqa: E402
 
-# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="JSA WASDE — Balance Sheet",
     page_icon="🌾",
@@ -51,417 +47,210 @@ st.set_page_config(
 style.inject()
 style.nav_bar()
 
-# ── USDA FAS PSD API (live balance sheet; no Snowflake needed) ────────────────
-def _secret(key: str, default: str = "") -> str:
-    try:
-        return st.secrets[key]
-    except Exception:
-        return os.environ.get(key, default)
-
-PSD_VIZ_BASE = "https://apps.fas.usda.gov/PSDOnlineApi/api/CompositeVisualization"
-
-COMMODITIES = ["Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"]
-
-COMM_CODES = {
-    "Corn":         "0440000",
-    "Soybeans":     "2222000",
-    "Wheat":        "0410000",
-    "Cotton":       "2631000",
-    "Rice, Milled": "0422110",
-    "Soybean Oil":  "4232000",
-}
-
-US_COUNTRY    = "US"
-WORLD_COUNTRY = "00"
-
-# Attribute IDs (strings) → display names
-ATTR = {
-    "20":  "Beginning Stocks",
-    "28":  "Production",
-    "57":  "Imports",
-    "86":  "Total Supply",
-    "130": "Feed/Residual Use",
-    "192": "Food/Seed/Industrial Use",
-    "88":  "Exports",
-    "185": "Total Use",
-    "176": "Ending Stocks",
-}
-
-BALANCE_ORDER = ["20", "28", "57", "86", "130", "192", "88", "185", "176"]
-TOTAL_ROWS    = {"Total Supply", "Total Use"}
-STOCK_ROWS    = {"Beginning Stocks", "Ending Stocks"}
+YEARS = list(range(1960, date.today().year + 2))
+SNAPSHOT_COMMODITIES = {"Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"}
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+          "October", "November", "December"]
+TABLE_COLORS = {"border": style.BORDER, "text": style.TEXT, "muted": style.TEXT_MUTED, "green": C_GREEN,
+                "dark": "#3f4f44", "good": "#1f7a3d", "bad": C_RED}
 
 
-REGION_CODE = "R00"
-
-@st.cache_resource
-def _http():
-    s = requests.Session()
-    s.headers.update({"User-Agent": "JPSI-WASDE/1.0"})
-    retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
-    s.mount("https://", HTTPAdapter(max_retries=retry))
-    return s
+def mkt(y: int) -> str:
+    return f"{y}/{str(y + 1)[-2:]}"
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _get_reporting_periods() -> tuple[str, str]:
-    """Return (current_period, prior_period) from the PSD reporting-periods list."""
-    try:
-        r = _http().get(f"{PSD_VIZ_BASE}/GetReportingPeriods", timeout=20)
-        r.raise_for_status()
-        periods = r.json()
-        latest = periods[0]["value"]
-        prior  = periods[1]["value"] if len(periods) > 1 else latest
-        return latest, prior
-    except Exception:
-        from datetime import datetime
-        now = datetime.now()
-        cur = f"{now.year}{now.month:02d}"
-        prev_mo = now.month - 1 if now.month > 1 else 12
-        prev_yr = now.year if now.month > 1 else now.year - 1
-        return cur, f"{prev_yr}{prev_mo:02d}"
+if not db.snowflake_available():
+    st.info("**Snowflake not configured.** The balance sheet reads JSA.WASDE.PSD_HISTORY.")
+    style.disclaimer()
+    st.stop()
 
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_balance_sheet(commodity_code: str, country_code: str,
-                         reporting_period: str) -> dict:
-    try:
-        r = _http().post(f"{PSD_VIZ_BASE}/GetAllAttributeData",
-                         json={
-                             "reportingPeriod":       reporting_period,
-                             "reportingCutoffPeriod": None,
-                             "commodityCode":         commodity_code,
-                             "regionCode":            REGION_CODE,
-                             "countryCode":           country_code,
-                             "attributeId":           "4",
-                         }, timeout=60)
-        r.raise_for_status()
-        return r.json() or {}
-    except Exception:
-        return {}
-
-
-def _parse_viz_response(data: dict) -> pd.DataFrame:
-    """Convert GetAllAttributeData response to long-form DataFrame."""
-    headers = data.get("headerValues", [])
-    rows = []
-    for attr in data.get("attributeValues", []):
-        attr_id   = str(attr.get("attributeId", "")).strip()
-        attr_name = attr.get("attributeName", "").strip()
-        vals      = attr.get("attributeValues", [])
-        # headers[1:] maps to vals; skip idx 1 (Change) and idx 2 (prior period dup)
-        for col_i, hdr in enumerate(headers[1:]):
-            if col_i in (1, 2):
-                continue  # Change column, prior-period duplicate
-            import re
-            m = re.match(r"(\d{2})/\d{2}", hdr.strip())
-            if not m or col_i >= len(vals):
-                continue
-            myr = 2000 + int(m.group(1))
-            raw = vals[col_i]
-            if raw is None or raw == "":
-                continue
-            raw_str = str(raw).split("(")[0].strip().replace(",", "")
-            try:
-                value = float(raw_str)
-            except ValueError:
-                continue
-            rows.append({
-                "attributeId":   attr_id,
-                "attributeName": attr_name,
-                "marketYear":    myr,
-                "value":         value,
-            })
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    # PSD has no Total Use attribute: derive it as Total Consumption (125) + MY Exports (88)
-    piv = df[df["attributeId"].isin(["125", "88"])].pivot_table(
-        index="marketYear", columns="attributeId", values="value", aggfunc="first")
-    if {"125", "88"}.issubset(piv.columns):
-        tu = piv.dropna(subset=["125", "88"]).sum(axis=1).reset_index()
-        tu.columns = ["marketYear", "value"]
-        tu["attributeId"] = "185"
-        tu["attributeName"] = "Total Use"
-        df = pd.concat([df, tu[["attributeId", "attributeName", "marketYear", "value"]]],
-                       ignore_index=True)
-    return df
-
-
-def _val(df: pd.DataFrame, attr_id: str, year: int) -> float | None:
-    if df.empty:
-        return None
-    row = df[(df["attributeId"] == str(attr_id)) & (df["marketYear"] == year)]
-    return float(row["value"].values[0]) if not row.empty else None
-
-
-def _ts(df: pd.DataFrame, attr_id: str) -> pd.Series:
-    if df.empty:
-        return pd.Series(dtype=float)
-    sub = df[df["attributeId"] == str(attr_id)].sort_values("marketYear")
-    return sub.set_index("marketYear")["value"].astype(float)
-
-
-# ── Top control bar ───────────────────────────────────────────────────────────
-rp, rp_prior = _get_reporting_periods()
-rp_yr = int(rp[:4])
-all_years = list(range(rp_yr + 1, 2004, -1))
-# Default to 2026/27 until July when the new marketing year becomes current.
-_DEFAULT_MKT_YEAR = 2026
-default_year_idx = all_years.index(_DEFAULT_MKT_YEAR) if _DEFAULT_MKT_YEAR in all_years else 1
+# ── Controls ──────────────────────────────────────────────────────────────────
+_loaded = set(db.psd_loaded_commodities())
+COMMODITIES = [c for c, code_ in pm.COMMODITIES.items() if code_ in _loaded]
+if not COMMODITIES:
+    st.warning("USDA PSD history is still loading for the first time — try again shortly.")
+    style.disclaimer()
+    st.stop()
 
 st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
-_c1, _c2, _c3, _c4, _c5 = st.columns([2, 1, 1, 1, 1])
-with _c1:
-    commodity = st.selectbox("Commodity", COMMODITIES, label_visibility="visible")
-with _c2:
-    region = st.radio("Region", ["US", "World"], horizontal=True)
-with _c3:
-    imperial = st.toggle("Million bu", value=False)
-with _c4:
-    mkt_year = st.selectbox("Mkt Year", all_years, index=default_year_idx,
-                             format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
-with _c5:
-    hist_from = st.selectbox("History from", list(range(2005, mkt_year + 1)),
-                              index=0,
-                              format_func=lambda y: f"{y}/{str(y+1)[-2:]}")
+c1, c2, c3, c4, c5 = st.columns([1.5, 1.5, 1, 1, 1.2])
+with c1:
+    commodity = st.selectbox("Commodity", COMMODITIES, key="bs_commodity")
+code = pm.COMMODITIES[commodity]
+
+ctry = db.psd_countries(code)
+if ctry.empty:
+    st.warning(f"USDA PSD history for **{commodity}** hasn't been loaded yet. It is loading now — try again shortly.")
+    style.disclaimer()
+    st.stop()
+names = dict(zip(ctry.country_name, ctry.country_code))
+ordered = [n for n in ("World", "United States") if n in names] + sorted(
+    n for n in names if n not in ("World", "United States"))
+with c2:
+    region = st.selectbox("Region / country", ordered, key=f"bs_region_{code}")
+
+df = db.psd_history(code, names[region])
+if df.empty:
+    st.warning(f"No PSD history for {commodity} in {region}.")
+    style.disclaimer()
+    st.stop()
+
+basic = bs.basics(df)
+N = bs.derive(basic)
+first_year = int(N["production"].dropna().index.min()) if "production" in N else int(N.index.min())
+latest = int(N["production"].dropna().index.max()) if "production" in N else int(N.index.max())
+
+with c3:
+    begin = st.selectbox("Begin year", YEARS, index=YEARS.index(max(2000, first_year)), key="bs_begin",
+                         format_func=mkt)
+with c4:
+    end = st.selectbox("End year", YEARS, index=YEARS.index(latest), key="bs_end", format_func=mkt)
+with c5:
+    system = (st.segmented_control("Units", ["Metric", "Imperial"], default="Imperial", key="bs_units")
+              or "Imperial").lower()
 st.markdown("</div>", unsafe_allow_html=True)
 
-comm_code    = COMM_CODES[commodity]
-country_code = US_COUNTRY if region == "US" else WORLD_COUNTRY
+b0 = max(begin, first_year)
+e0 = min(end, latest)
+if b0 > e0:
+    st.warning("The begin year is after the end year — adjust the range.")
+    style.disclaimer()
+    st.stop()
 
-# ── Load data ─────────────────────────────────────────────────────────────────
-with st.spinner("Loading PSD data…"):
-    raw       = _fetch_balance_sheet(comm_code, country_code, rp)
-    raw_prior = _fetch_balance_sheet(comm_code, country_code, rp_prior)
-    df        = _parse_viz_response(raw)
-    df_prior  = _parse_viz_response(raw_prior)
-    df_hist   = df[df["marketYear"] >= hist_from] if not df.empty else df
+labels = pm.unit_labels(commodity, system)
+as_of = int(df["as_of"].max())
+as_of_txt = f"{MONTHS[as_of % 100 - 1]} {as_of // 100}" if as_of else ""
 
-ul = unit_label(commodity, imperial)
-
+# ── Title ─────────────────────────────────────────────────────────────────────
 st.markdown(
-    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.35rem;"
-    f"font-weight:600;color:{style.TEXT};margin-bottom:2px'>"
-    f"{commodity} — {region} Balance Sheet &nbsp;"
-    f"<span style='font-size:0.95rem;color:{style.TEXT_MUTED};font-weight:400'>"
-    f"{mkt_year}/{str(mkt_year+1)[-2:]} &nbsp;·&nbsp; USDA FAS PSD &nbsp;·&nbsp; {ul}</span></div>",
+    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.6rem;font-weight:600;"
+    f"color:{style.TEXT};margin:4px 0 2px'>{region} {commodity} — Supply &amp; Demand Balance Sheet</div>"
+    f"<div style='color:{style.TEXT_MUTED};font-size:0.85rem;margin-bottom:6px'>"
+    f"{mkt(b0)} – {mkt(e0)} &nbsp;·&nbsp; {system.title()} &nbsp;·&nbsp; USDA FAS PSD"
+    f"{' &nbsp;·&nbsp; updated ' + as_of_txt if as_of_txt else ''}</div>",
     unsafe_allow_html=True,
 )
-st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsafe_allow_html=True)
 
-# ── KPI row ───────────────────────────────────────────────────────────────────
-def _kpi(label, attr_id, invert_delta=False):
-    cur  = _val(df, attr_id, mkt_year)
-    prev = _val(df, attr_id, mkt_year - 1)
-    v    = convert(cur,  commodity, imperial)
-    vp   = convert(prev, commodity, imperial)
-    disp = f"{v:,.1f}" if v is not None else "N/A"
-    if v is not None and vp is not None:
-        delta = v - vp
-        delta_s = f"{delta:+,.1f} {ul}"
-    else:
-        delta_s = None
-    st.metric(label, disp, delta_s)
+# ── KPI row (end year) ────────────────────────────────────────────────────────
+cur_view = bs.to_display(bs.make_view(N, "current"), commodity, system,
+                         [k for k, *_ in bs.ROWS if k in N.columns])
 
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-with k1: _kpi("Production",    "28")
-with k2: _kpi("Exports",       "88")
-with k3: _kpi("Total Use",    "185")
-with k4: _kpi("Ending Stocks","176")
-with k5:
-    es  = convert(_val(df, "176", mkt_year),  commodity, imperial)
-    tu  = convert(_val(df, "185", mkt_year),  commodity, imperial)
-    esp = convert(_val(df, "176", mkt_year-1),commodity, imperial)
-    tup = convert(_val(df, "185", mkt_year-1),commodity, imperial)
-    stu  = f"{es/tu*100:.1f}%"  if (es and tu and tu > 0) else "N/A"
-    stup = f"{(es/tu - esp/tup)*100:+.1f}pp" if (es and tu and esp and tup and tu > 0 and tup > 0) else None
-    st.metric("Stocks / Use", stu, stup)
-with k6:
-    fx_price, fx_ticker = massive.front_month_price(commodity)
-    fx_val, fx_label = massive.fmt_futures(commodity, fx_price, fx_ticker)
-    st.metric(fx_label, fx_val)
 
-st.markdown("<br>", unsafe_allow_html=True)
+def kpi(col, label, key, pct=False):
+    with col:
+        v = cur_view.at[e0, key] if key in cur_view and e0 in cur_view.index else None
+        pv = cur_view.at[e0 - 1, key] if key in cur_view and (e0 - 1) in cur_view.index else None
+        if v is None or pd.isna(v):
+            st.metric(label, "N/A")
+            return
+        dec = 1
+        delta = None
+        if pv is not None and not pd.isna(pv):
+            delta = f"{v - pv:+,.1f}{'pp' if pct else ''} vs LY"
+        st.metric(label, f"{v:,.{dec}f}{'%' if pct else ''}", delta)
 
-# ── Delta helpers ─────────────────────────────────────────────────────────────
-def _cvt(v):
-    return convert(v, commodity, imperial) if v is not None else None
 
-def _delta_lr(attr_id: str) -> float | None:
-    cur  = _cvt(_val(df,       attr_id, mkt_year))
-    prev = _cvt(_val(df_prior, attr_id, mkt_year))
-    return (cur - prev) if (cur is not None and prev is not None) else None
+cols = st.columns(6)
+kpi(cols[0], f"Production {mkt(e0)}", "production")
+kpi(cols[1], "Exports", "exports")
+kpi(cols[2], "Total Use", "total_use")
+kpi(cols[3], "Ending Stocks", "ending_stocks")
+kpi(cols[4], "Stocks-to-Use", "stu", pct=True)
+futures_slot = cols[5]          # filled after the table so the slow futures lookup never blocks it
 
-def _delta_ly(attr_id: str) -> float | None:
-    cur  = _cvt(_val(df, attr_id, mkt_year))
-    prev = _cvt(_val(df, attr_id, mkt_year - 1))
-    return (cur - prev) if (cur is not None and prev is not None) else None
+# ── Balance sheet ─────────────────────────────────────────────────────────────
+t1, t2 = st.columns([3, 1.4])
+with t1:
+    view_label = st.segmented_control("Show", list(bs.VIEWS), default="Current", key="bs_view") or "Current"
+view = bs.VIEWS[view_label]
 
-def _delta_5ya(attr_id: str) -> float | None:
-    cur = _cvt(_val(df, attr_id, mkt_year))
-    if cur is None:
-        return None
-    vals = [_cvt(_val(df, attr_id, y)) for y in range(mkt_year - 5, mkt_year)]
-    valid = [v for v in vals if v is not None]
-    if not valid:
-        return None
-    return cur - sum(valid) / len(valid)
+prev = None
+if view == "lr":
+    snap = {"World": "0000World", "United States": "0000US"}.get(region)
+    if snap and commodity in SNAPSHOT_COMMODITIES:
+        units = df.groupby("attribute_id")["unit_id"].agg(lambda s: s.mode().iat[0])
+        prev = bs.previous_vintage(basic, db.latest_revisions(commodity, snap), units)
 
-def _fmt_delta(v: float | None) -> str:
-    return f"{v:+,.1f}" if v is not None else "—"
+years = [y for y in range(b0, e0 + 1) if y in N.index]
+keys = bs.visible_keys(N, years)
+V = bs.make_view(N, view, prev)
+D = bs.to_display(V, commodity, system, keys)
 
-DELTA_COLS = ["Δ LR", "Δ LY", "Δ 5YA"]
+st.markdown(bs.render_html(D, years, keys, commodity, system, view, latest, TABLE_COLORS),
+            unsafe_allow_html=True)
 
-# ── Two-column layout: balance sheet + charts ─────────────────────────────────
-col_bs, col_charts = st.columns([1.35, 1.7])
+notes = {
+    "current": "Current USDA estimates and forecasts; the shaded column is the current marketing year.",
+    "lr": "Δ LR = change at the latest WASDE versus the previous one. Available for World and United States "
+          "in corn, soybeans, wheat, cotton, rice and soybean oil, for the last three marketing years.",
+    "ly": "Δ LY = change versus the prior marketing year (Stocks-to-Use in percentage points).",
+    "5ya": "Δ 5YA = change versus the average of the previous five marketing years.",
+}
+st.caption(
+    f"Units: {labels['qty']} · area {labels['area']} · yield {labels['yield']} · Stocks-to-Use = Ending Stocks ÷ Total Use "
+    f"· Total Use = Domestic Consumption + Exports. {notes[view]}"
+)
+if view == "lr" and prev is None:
+    st.info("Change vs last report isn't available for this commodity or region.")
+with t2:
+    st.download_button("Download table (CSV)", bs.to_csv(D, years, keys, commodity, system),
+                       file_name=f"{commodity}_{region}_balance_sheet_{view}.csv".replace(" ", "_"),
+                       mime="text/csv", width="stretch")
 
-with col_bs:
-    # derive the prior-period label for the caption
-    prior_yr  = int(rp_prior[:4])
-    prior_mo  = int(rp_prior[4:])
-    prior_lbl = pd.Timestamp(year=prior_yr, month=prior_mo, day=1).strftime("%b %Y")
+price, ticker = massive.front_month_price(commodity)
+if price is not None:
+    fut_val, fut_label = massive.fmt_futures(commodity, price, ticker)
+    with futures_slot:
+        st.metric(fut_label, fut_val)
 
-    style.sec("Supply & Demand Balance Sheet")
+# ── Trend charts for the selected range ───────────────────────────────────────
+style.sec("Trends")
+chart_years = [y for y in years]
+ch1, ch2 = st.columns(2)
 
-    yrs_show = [y for y in [mkt_year-2, mkt_year-1, mkt_year]
-                if not df.empty and y in df["marketYear"].values]
-    bs_data = {"Line Item": [ATTR[a] for a in BALANCE_ORDER]}
-    for yr in yrs_show:
-        col_label = f"{yr}/{str(yr+1)[-2:]}"
-        bs_data[col_label] = [
-            fmt(_val(df, a, yr), commodity, imperial)
-            for a in BALANCE_ORDER
-        ]
-    bs_data["Δ LR"]  = [_fmt_delta(_delta_lr(a))  for a in BALANCE_ORDER]
-    bs_data["Δ LY"]  = [_fmt_delta(_delta_ly(a))  for a in BALANCE_ORDER]
-    bs_data["Δ 5YA"] = [_fmt_delta(_delta_5ya(a)) for a in BALANCE_ORDER]
-
-    bs_df = pd.DataFrame(bs_data).set_index("Line Item")
-
-    def _style_bs(s):
-        styles = []
-        for idx in s.index:
-            if idx in TOTAL_ROWS:
-                styles.append("font-weight:700;border-top:1px solid #dde5de")
-            elif idx in STOCK_ROWS:
-                styles.append(f"color:{C_GOLD};font-weight:700")
-            else:
-                styles.append("")
-        return styles
-
-    def _color_delta(val):
-        """Green for positive, red for negative delta cells."""
-        if not isinstance(val, str) or val == "—":
-            return ""
-        try:
-            n = float(val.replace(",", ""))
-            if n > 0:
-                return f"color:{C_GREEN};font-weight:600"
-            if n < 0:
-                return f"color:{C_RED};font-weight:600"
-        except ValueError:
-            pass
-        return ""
-
-    styled = (
-        bs_df.style
-             .apply(_style_bs, axis=0)
-             .map(_color_delta, subset=DELTA_COLS)
-             .set_properties(**{"font-size": "0.85rem"})
-    )
-
-    st.dataframe(styled, use_container_width=True, height=360)
-    st.caption(
-        f"Units: {ul}  ·  Source: USDA FAS PSD  ·  "
-        f"Δ LR = vs {prior_lbl} WASDE  ·  Δ LY = vs prior year  ·  Δ 5YA = vs 5-yr avg"
-    )
-
-with col_charts:
-    prod_ts   = _ts(df_hist, "28")
-    use_ts    = _ts(df_hist, "185")
-    stocks_ts = _ts(df_hist, "176")
-
+with ch1:
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=prod_ts.index, y=[convert(v, commodity, imperial) for v in prod_ts],
-                         name="Production", marker_color=C_LIME, opacity=0.85))
-    fig.add_trace(go.Bar(x=use_ts.index,  y=[convert(v, commodity, imperial) for v in use_ts],
-                         name="Total Use",  marker_color=C_BLUE, opacity=0.70))
-    fig.add_trace(go.Scatter(
-        x=stocks_ts.index,
-        y=[convert(v, commodity, imperial) for v in stocks_ts],
-        name="Ending Stocks",
-        line=dict(color=C_GOLD, width=2.5),
-        mode="lines+markers", marker=dict(size=5),
-        yaxis="y2",
-    ))
-    fig.update_layout(
-        **style.plot_layout(
-            title=dict(text="Production · Total Use · Ending Stocks", font=dict(size=13)),
-            barmode="group",
-            yaxis=dict(title=ul, gridcolor=style.BORDER),
-            yaxis2=dict(title="Ending Stocks", overlaying="y", side="right",
-                        gridcolor="rgba(0,0,0,0)", zeroline=False),
-            height=330,
-        )
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    for key, name, color in (("production", "Production", C_LIME), ("total_use", "Total Use", C_BLUE)):
+        if key in cur_view:
+            fig.add_trace(go.Bar(x=[mkt(y) for y in chart_years], y=[cur_view.at[y, key] for y in chart_years],
+                                 name=name, marker_color=color, opacity=0.9))
+    if "ending_stocks" in cur_view:
+        fig.add_trace(go.Scatter(x=[mkt(y) for y in chart_years],
+                                 y=[cur_view.at[y, "ending_stocks"] for y in chart_years], name="Ending Stocks",
+                                 mode="lines+markers", line=dict(color=C_GOLD, width=2.5), marker=dict(size=5),
+                                 yaxis="y2"))
+    fig.update_layout(**style.plot_layout(
+        title=dict(text="Production · Total Use · Ending Stocks", font=dict(size=13)),
+        barmode="group", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), xaxis=dict(nticks=14, tickangle=-45), yaxis=dict(title=labels["qty"], gridcolor=style.BORDER),
+        yaxis2=dict(title="Ending Stocks", overlaying="y", side="right", gridcolor="rgba(0,0,0,0)", zeroline=False),
+        height=340))
+    st.plotly_chart(fig, width="stretch")
 
-    # S/U ratio bar
-    stu_ts = (stocks_ts / use_ts * 100).dropna()
-    colors = [C_RED if v < 10 else C_GOLD if v < 15 else C_LIME for v in stu_ts]
-    fig2 = go.Figure(go.Bar(x=stu_ts.index, y=stu_ts.values,
-                             marker_color=colors, name="S/U %"))
-    fig2.update_layout(**style.plot_layout(
-        title=dict(text="Stocks-to-Use %", font=dict(size=13)),
-        yaxis=dict(title="%", gridcolor=style.BORDER),
-        height=210,
-    ))
-    st.plotly_chart(fig2, use_container_width=True)
+with ch2:
+    if "stu" in cur_view:
+        xs = [mkt(y) for y in chart_years]
+        ys = [cur_view.at[y, "stu"] for y in chart_years]
+        avg = pd.Series(ys, dtype=float).mean()
+        fig2 = go.Figure(go.Bar(x=xs, y=ys, marker_color=[C_GOLD if y == latest else C_LIME for y in chart_years],
+                                name="Stocks-to-Use"))
+        fig2.add_hline(y=avg, line_dash="dot", line_color=style.TEXT_MUTED,
+                       annotation_text=f"range avg {avg:.1f}%", annotation_position="top right")
+        fig2.update_layout(**style.plot_layout(
+            title=dict(text="Stocks-to-Use %", font=dict(size=13)),
+            xaxis=dict(nticks=14, tickangle=-45), yaxis=dict(title="%", gridcolor=style.BORDER), height=340, showlegend=False))
+        st.plotly_chart(fig2, width="stretch")
 
-# ── Use breakdown ─────────────────────────────────────────────────────────────
-style.sec("Domestic Use Breakdown")
-u1, u2 = st.columns(2)
-
-with u1:
-    feed_ts = _ts(df_hist, "130")
-    fsi_ts  = _ts(df_hist, "192")
-    exp_ts  = _ts(df_hist, "88")
-    idx = sorted(set(feed_ts.index) | set(fsi_ts.index) | set(exp_ts.index))
+use_keys = [k for k in ("feed", "feed_waste", "crush", "food_use", "fsi", "industrial", "loss", "exports")
+            if k in cur_view and cur_view.loc[chart_years, k].notna().any()]
+if len(use_keys) >= 2:
+    palette = [C_GOLD, "#d9b87a", C_GREEN, C_LIME, "#9b89c4", "#c4785a", "#8c8c8c", C_BLUE]
     fig3 = go.Figure()
-    for ts, name, color in [(feed_ts, "Feed/Residual", C_GOLD),
-                             (fsi_ts,  "Food/Seed/Industrial", C_LIME),
-                             (exp_ts,  "Exports", C_BLUE)]:
-        vals = [convert(ts.get(y), commodity, imperial) for y in idx]
-        fig3.add_trace(go.Bar(x=idx, y=vals, name=name, marker_color=color))
+    for i, k in enumerate(use_keys):
+        fig3.add_trace(go.Bar(x=[mkt(y) for y in chart_years], y=[cur_view.at[y, k] for y in chart_years],
+                              name=bs.LABEL[k], marker_color=palette[i % len(palette)]))
     fig3.update_layout(**style.plot_layout(
-        title=dict(text="Use Components (stacked)", font=dict(size=13)),
-        barmode="stack",
-        yaxis=dict(title=ul, gridcolor=style.BORDER),
-        height=300,
-    ))
-    st.plotly_chart(fig3, use_container_width=True)
-
-with u2:
-    pie_vals = {
-        "Feed/Residual":         convert(_val(df, "130", mkt_year), commodity, imperial),
-        "Food/Seed/Industrial":  convert(_val(df, "192", mkt_year), commodity, imperial),
-        "Exports":               convert(_val(df, "88", mkt_year), commodity, imperial),
-    }
-    pie_vals = {k: v for k, v in pie_vals.items() if v and v > 0}
-    if pie_vals:
-        fig4 = go.Figure(go.Pie(
-            labels=list(pie_vals.keys()),
-            values=list(pie_vals.values()),
-            hole=0.42,
-            marker_colors=[C_GOLD, C_LIME, C_BLUE],
-            textfont=dict(color=style.TEXT, size=12),
-        ))
-        fig4.update_layout(**style.plot_layout(
-            title=dict(text=f"Use Mix — {mkt_year}/{str(mkt_year+1)[-2:]}",
-                       font=dict(size=13)),
-            height=280,
-        ))
-        st.plotly_chart(fig4, use_container_width=True)
+        title=dict(text="Use components (stacked)", font=dict(size=13)), barmode="stack", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), xaxis=dict(nticks=20, tickangle=-45), 
+        yaxis=dict(title=labels["qty"], gridcolor=style.BORDER), height=340))
+    st.plotly_chart(fig3, width="stretch")
 
 style.disclaimer()

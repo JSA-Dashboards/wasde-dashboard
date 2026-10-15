@@ -219,6 +219,45 @@ def bucket_history(commodity: str,
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def psd_history(commodity_code: str, country_code: str) -> pd.DataFrame:
+    """Full PSD history (1960+) for one commodity and country ('00' = World)."""
+    return _query("""
+        SELECT market_year, attribute_id, unit_id, value, as_of
+        FROM JSA.WASDE.PSD_HISTORY
+        WHERE commodity_code = %s AND country_code = %s
+        ORDER BY market_year
+    """, (commodity_code, country_code))
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def psd_loaded_commodities() -> list[str]:
+    """PSD commodity codes that have history loaded (the first full load fills these in one by one)."""
+    return _query("SELECT DISTINCT commodity_code FROM JSA.WASDE.PSD_HISTORY")["commodity_code"].tolist()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def psd_countries(commodity_code: str) -> pd.DataFrame:
+    """Countries that have PSD history for a commodity, with display names."""
+    return _query("""
+        SELECT h.country_code, COALESCE(c.country_name, h.country_code) AS country_name
+        FROM (SELECT DISTINCT country_code FROM JSA.WASDE.PSD_HISTORY WHERE commodity_code = %s) h
+        LEFT JOIN JSA.WASDE.PSD_COUNTRIES c ON c.country_code = h.country_code
+        ORDER BY country_name
+    """, (commodity_code,))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def latest_revisions(commodity: str, snapshot_country: str) -> pd.DataFrame:
+    """Change in each attribute at the newest WASDE release vs the one before it (US / World, 3 marketing years)."""
+    return _query("""
+        SELECT market_year, attribute_name, value, revision
+        FROM JSA.WASDE.REVISIONS
+        WHERE commodity = %s AND country_code = %s
+          AND release_ym = (SELECT MAX(release_ym) FROM JSA.WASDE.REVISIONS WHERE commodity = %s)
+    """, (commodity, snapshot_country, commodity))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def conab_series(crop: str) -> pd.DataFrame:
     """CONAB historical series (area/yield/production by region and state)."""
     return _query("""
