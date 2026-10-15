@@ -269,6 +269,17 @@ def conab_series(crop: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def conab_sd(product: str) -> pd.DataFrame:
+    """CONAB supply & demand balance sheet (1,000 t): latest estimate (rev_rank 0) and the prior report (1)."""
+    return _query("""
+        SELECT item, item_order, season, start_year, rev_rank, rev_label, value, source
+        FROM JSA.WASDE.CONAB_SD
+        WHERE product = %s
+        ORDER BY start_year, item_order
+    """, (product,))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def magyp_series(crop: str) -> pd.DataFrame:
     """Argentine ministry (MAGyP) campaign estimates by province."""
     return _query("""

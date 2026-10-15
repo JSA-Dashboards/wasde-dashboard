@@ -4,3 +4,4 @@ snowflake-connector-python>=3.5.0
 cryptography>=42.0.0
 python-dotenv>=1.0.0
 xlrd>=2.0.1
+odfpy>=1.4.1

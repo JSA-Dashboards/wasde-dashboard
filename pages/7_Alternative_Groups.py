@@ -39,6 +39,9 @@ _fresh_modules()
 
 import db  # noqa: E402
 import psd  # noqa: E402
+import balance_sheet as bs  # noqa: E402
+import psd_meta as pm  # noqa: E402
+import sd_table  # noqa: E402
 import style  # noqa: E402
 from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_ORANGE, C_RED  # noqa: E402
 from units import convert, unit_label  # noqa: E402
@@ -671,26 +674,144 @@ def france_tab():
     eurostat_view("France", "FR", members=False)
 
 
+TABLE_COLORS = {"border": style.BORDER, "text": style.TEXT, "muted": style.TEXT_MUTED, "green": C_GREEN,
+                "dark": "#3f4f44", "good": "#1f7a3d", "bad": C_RED}
+SD_PRODUCTS = {"Soybeans": ["Soybeans", "Soybean meal", "Soybean oil"], "Corn": ["Corn"], "Wheat": ["Wheat"]}
+SD_NAMES = {"Soybeans": "Soybeans", "Soybean meal": "Soybean meal", "Soybean oil": "Soybean oil",
+            "Corn": "Corn", "Wheat": "Wheat"}
+
+
+@st.fragment
+def conab_balance():
+    """Brazil's official supply & demand balance (CONAB 'Quadro de Oferta e Demanda'), latest vs prior report."""
+    prods = SD_PRODUCTS.get(crop)
+    if not prods:
+        return
+    style.sec("CONAB supply & demand balance sheet")
+    view = st.segmented_control("Show", ["Current", "Δ vs prior report"], default="Current", key="sd_view") or "Current"
+    delta = view != "Current"
+    shown = False
+    for prod in prods:
+        d = db.conab_sd(prod)
+        if d.empty:
+            continue
+        shown = True
+        grain = prod == crop                                   # grain converts to bushels; meal/oil stay in tonnes
+        unit = ul if grain else "1,000 t"
+        seasons = (d.drop_duplicates("season").sort_values("start_year", ascending=False)["season"].tolist())
+        cur = seasons[0]
+        items = d.sort_values("item_order").drop_duplicates("item")["item"].tolist()
+
+        def val(item, season, rank):
+            m = d[(d.item == item) & (d.season == season) & (d.rev_rank == rank)]
+            return float(m.value.iat[0]) if len(m) else None
+
+        def conv(v):
+            return None if v is None else (cvt(v, crop, imperial) if grain else v)
+
+        rows = []
+        for it in items:
+            vals = {}
+            for s in seasons:
+                a = val(it, s, 0)
+                if delta:
+                    b = val(it, s, 1)
+                    vals[s] = None if a is None or b is None else conv(a) - conv(b)
+                else:
+                    vals[s] = conv(a)
+            rows.append((it, "qty", vals))
+        if "Ending Stocks" in items and "Total Use" in items:
+            su = {}
+            for s in seasons:
+                e, u = val("Ending Stocks", s, 0), val("Total Use", s, 0)
+                e1, u1 = val("Ending Stocks", s, 1), val("Total Use", s, 1)
+                now = e / u * 100 if e is not None and u else None
+                if delta:
+                    su[s] = now - e1 / u1 * 100 if now is not None and e1 is not None and u1 else None
+                else:
+                    su[s] = now
+            rows.append(("Stocks-to-Use", "pct", su))
+        revs = d[d.rev_rank == 0].rev_label.replace("", pd.NA).dropna()
+        prev = d[d.rev_rank == 1].rev_label.replace("", pd.NA).dropna()
+        title = SD_NAMES.get(prod, prod)
+        st.markdown(f"<div style='font-weight:600;margin:10px 0 4px;color:{style.TEXT}'>Brazil {title}</div>",
+                    unsafe_allow_html=True)
+        st.markdown(sd_table.render(rows, seasons, cur, unit, TABLE_COLORS, signed=delta), unsafe_allow_html=True)
+        if delta:
+            if len(revs) and len(prev):
+                st.caption(f"Change from the {prev.iloc[0]} report to {revs.iloc[0]} (only seasons CONAB revised).")
+            else:
+                st.caption("CONAB's soybean complex sheet carries no prior-report column, so no revision is shown.")
+    if not shown:
+        st.info("No CONAB balance sheet loaded yet. Run `python etl/fetch_south_america.py --only conabsd`.")
+        return
+    src = db.conab_sd(prods[0])
+    st.caption(f"Source: CONAB, Quadro de Oferta e Demanda de Grãos ({src.source.iloc[0] if len(src) else ''}); "
+               "monthly, 1,000 t unless converted. Marketing years follow CONAB's convention (wheat by calendar year). "
+               "CONAB content is CC BY-ND 3.0.")
+
+
+PSD_CROPS = {"Canola": "Canola (Rapeseed)"}
+
+
+@st.fragment
+def psd_balance(country: str, ccode: str):
+    """Full USDA PSD supply & demand table for one country (history from Snowflake)."""
+    name = PSD_CROPS.get(crop, crop)
+    code = pm.COMMODITIES.get(name)
+    if not code or code not in db.psd_loaded_commodities():
+        return
+    df = db.psd_history(code, ccode)
+    if df.empty:
+        return
+    style.sec(f"{country} — USDA PSD balance sheet")
+    span = st.segmented_control("History", ["10 years", "20 years", "All"], default="10 years",
+                                key=f"psdbs_{ccode}") or "10 years"
+    system = "imperial" if imperial else "metric"
+    N = bs.derive(bs.basics(df))
+    latest = int(N.index.max())
+    n = {"10 years": 10, "20 years": 20}.get(span, 70)
+    years = [y for y in range(latest - n + 1, latest + 1) if y in N.index]
+    keys = bs.visible_keys(N, years, name)
+    D = bs.to_display(bs.make_view(N, "current"), name, system, keys)
+    st.markdown(f"<div style='color:{style.TEXT_MUTED};font-size:0.85rem;margin:-4px 0 6px'>"
+                f"{country} {name} &nbsp;·&nbsp; {system.title()} &nbsp;·&nbsp; USDA FAS PSD</div>",
+                unsafe_allow_html=True)
+    st.markdown(bs.render_html(D, years, keys, name, system, "current", latest, TABLE_COLORS),
+                unsafe_allow_html=True)
+    st.caption("USDA's own balance sheet for the country (the shaded column is the current marketing year); "
+               "the Balance Sheet page has the same table for any country with the full history and CSV download.")
+
+
 tab_br, tab_ar, tab_ua, tab_ru, tab_au, tab_eu, tab_fr, tab_ca, tab_mx = st.tabs(
     ["Brazil · CONAB", "Argentina · BAGE / BCR", "Ukraine", "Russia", "Australia",
      "EU · Eurostat", "France", "Canada · StatCan", "Mexico"])
 with tab_br:
     brazil_tab()
+    conab_balance()
+    psd_balance("Brazil", "BR")
 with tab_ar:
     argentina_tab()
+    psd_balance("Argentina", "AR")
 with tab_ua:
     ukraine_tab()
+    psd_balance("Ukraine", "UP")
 with tab_ru:
     russia_tab()
+    psd_balance("Russia", "RS")
 with tab_au:
     australia_tab()
+    psd_balance("Australia", "AS")
 with tab_eu:
     eu_tab()
+    psd_balance("EU", "E4")
 with tab_fr:
     france_tab()
 with tab_ca:
     canada_tab()
+    psd_balance("Canada", "CA")
 with tab_mx:
     mexico_tab()
+    psd_balance("Mexico", "MX")
 
 style.disclaimer()

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run_south_america.sh — monthly origin-estimates reload, run by cron on the Droplet.
-# Re-downloads CONAB (Brazil) workbooks, Statistics Canada table 32-10-0359 and Eurostat apro_cpsh1, and
+# Re-downloads CONAB (Brazil) workbooks + the monthly supply/demand balance (CONAB_SD), Statistics Canada table 32-10-0359 and Eurostat apro_cpsh1, and
 # replaces CONAB_SERIES / STATCAN_SERIES / EUROSTAT_SERIES. Idempotent, so the catch-up run is harmless.
 # MAGyP (Argentina) is NOT loaded here: the Droplet cannot reach datos.magyp.gob.ar (connect
 # timeout, verified 2026-10-14). Refresh it from a desktop with `etl/fetch_south_america.py --only magyp`.
@@ -28,7 +28,8 @@ rc=0
 {
     echo "=== South America ETL start $(date -Is) ==="
     git pull --ff-only || echo "git pull failed — continuing with the code on disk"
-    "$VENV/bin/python" etl/fetch_south_america.py --only conab --only statcan --only eurostat
+    "$VENV/bin/pip" install -q -r deploy/requirements-droplet.txt || echo "pip install failed — continuing"
+    "$VENV/bin/python" etl/fetch_south_america.py --only conab --only conabsd --only statcan --only eurostat
     rc=$?    # capture immediately — must precede any other command
     echo "=== South America ETL finished $(date -Is) rc=$rc ==="
 } >>"$LOG" 2>&1

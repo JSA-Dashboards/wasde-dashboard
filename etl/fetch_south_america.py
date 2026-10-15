@@ -47,6 +47,24 @@ CONAB_FILES = {
 CONAB_METRICS = ["area_kha", "yield_kgha", "production_kt"]   # sheet order in every workbook
 CONAB_REGIONS = {"NORTE", "NORDESTE", "CENTRO-OESTE", "SUDESTE", "SUL", "NORTE/NORDESTE", "CENTRO-SUL"}
 
+CONAB_SD_LANDING = ("https://www.gov.br/conab/pt-br/atuacao/informacoes-agropecuarias/"
+                    "analises-do-mercado-agropecuario-e-extrativista/analises-de-mercado/"
+                    "quadro-de-oferta-e-demanda/graos")
+MONTHS_PT = {"janeiro": 1, "jan": 1, "fevereiro": 2, "fev": 2, "marco": 3, "mar": 3, "abril": 4, "abr": 4,
+             "maio": 5, "mai": 5, "junho": 6, "jun": 6, "julho": 7, "jul": 7, "agosto": 8, "ago": 8,
+             "setembro": 9, "set": 9, "outubro": 10, "out": 10, "novembro": 11, "nov": 11,
+             "dezembro": 12, "dez": 12}
+SD_PRODUCTS = {"algodao": "Cotton", "arroz em casca": "Rice (paddy)", "feijao": "Beans", "milho": "Corn",
+               "trigo": "Wheat", "soja": "Soybeans", "farelo de soja": "Soybean meal", "oleo de soja": "Soybean oil",
+               "sorgo": "Sorghum", "aveia": "Oats", "cevada": "Barley", "centeio": "Rye", "triticale": "Triticale"}
+SD_COLS = {"estoqueinicial": "Beginning Stocks", "producao": "Production", "importacao": "Imports",
+           "suprimento": "Total Supply", "consumo": "Domestic Use", "exportacao": "Exports",
+           "demandatotal": "Total Use", "estoquefinal": "Ending Stocks"}
+SD_SOY_ITEMS = {"estoque inicial": "Beginning Stocks", "producao": "Production", "importacao": "Imports",
+                "sementes/outros": "Seed & Other", "exportacao": "Exports", "processamento": "Crush",
+                "estoque final": "Ending Stocks", "vendas no mercado interno": "Domestic Sales"}
+SD_SOY_PRODUCTS = {"soja em grao": "Soybeans", "farelo": "Soybean meal", "oleo": "Soybean oil"}
+
 MAGYP_PACKAGE = "https://datos.gob.ar/api/3/action/package_show?id=estimaciones-agricolas"
 MAGYP_CROPS = {"soja total": "Soybeans", "maiz": "Corn", "trigo total": "Wheat"}
 
@@ -86,6 +104,12 @@ DDL = [
     """CREATE TABLE IF NOT EXISTS JSA.WASDE.EUROSTAT_SERIES (
         crop VARCHAR, geo VARCHAR, geo_name VARCHAR, year INTEGER, area_kha FLOAT,
         production_kt FLOAT, yield_tha FLOAT, loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
+    """CREATE TABLE IF NOT EXISTS JSA.WASDE.CONAB_SD (
+        product VARCHAR, item VARCHAR, item_order INTEGER, season VARCHAR, start_year INTEGER,
+        rev_rank INTEGER, rev_label VARCHAR, value FLOAT, source VARCHAR,
+        loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
+    "GRANT SELECT ON TABLE JSA.WASDE.CONAB_SD TO ROLE WASDE_ROLE",
+    "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.CONAB_SD TO ROLE WASDE_ETL_ROLE",
     "GRANT SELECT ON TABLE JSA.WASDE.STATCAN_SERIES TO ROLE WASDE_ROLE",
     "GRANT SELECT ON TABLE JSA.WASDE.EUROSTAT_SERIES TO ROLE WASDE_ROLE",
     "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.STATCAN_SERIES TO ROLE WASDE_ETL_ROLE",
@@ -130,6 +154,122 @@ def fetch_conab() -> pd.DataFrame:
         print(f"  CONAB {crop}: {len(df)} rows, latest {df.start_year.max()}")
         frames.append(df)
     return pd.concat(frames, ignore_index=True)
+
+
+def _month_of(url: str) -> int:
+    """Month number in a CONAB file name (janeiro / jan / fev / setembro ...); 0 if none."""
+    toks = re.findall(r"[a-z]+", _norm(url.rsplit("/", 1)[-1]))
+    return max((MONTHS_PT[t] for t in toks if t in MONTHS_PT), default=0)
+
+
+def latest_sd_url() -> str:
+    """Newest monthly 'Quadro de Oferta e Demanda de Graos' workbook (landing -> newest year page -> newest month)."""
+    land = _get(CONAB_SD_LANDING, 90, tries=6).text
+    years = {}
+    for h in re.findall(r'href="([^"]*quadro-de-oferta-e-demanda-de-graos[^"]*)"', land):
+        if h.lower().split("?")[0].endswith((".xlsx", ".xls", ".ods")):
+            continue
+        m = re.search(r"(20\d\d)", h)
+        if m:
+            years.setdefault(int(m.group(1)), h)
+    for y in sorted(years, reverse=True):
+        time.sleep(2)
+        page = _get(years[y], 90, tries=6).text
+        files = {h for h in re.findall(r'href="([^"]*\.(?:xlsx|xls|ods))"', page, re.I)}
+        files = [f for f in files if "oferta" in f.lower()]
+        if files:
+            return max(files, key=_month_of)
+    raise RuntimeError("no CONAB supply/demand workbook found")
+
+
+def _sd_book(content: bytes) -> pd.ExcelFile:
+    # CONAB saves OpenDocument files with an .xlsx name; pick the reader from the file's own header
+    engine = "odf" if b"opendocument" in content[:200].lower() else None
+    return pd.ExcelFile(io.BytesIO(content), engine=engine)
+
+
+def _season_key(v):
+    t = str(v).strip()
+    t = t[:-2] if t.endswith(".0") else t
+    m = re.match(r"(\d{4})(/\d{2})?", t)
+    return (m.group(0), int(m.group(1))) if m else (None, None)
+
+
+def parse_sd(content: bytes, source: str) -> pd.DataFrame:
+    """CONAB balance sheets: sheet 'Suprimento' (all crops, one row per season, monthly revisions as extra rows)
+    and 'Suprimento - Soja' (soy / meal / oil detail with crush). Values in 1,000 t. rev_rank 0 = latest, 1 = prior."""
+    book = _sd_book(content)
+    rows = []
+
+    main = next((n for n in book.sheet_names if _norm(n) == "suprimento"), None)
+    if main:
+        df = book.parse(main, header=None)
+        hi = next(i for i in range(len(df)) if _norm(df.iat[i, 0]) == "produto")
+        cols = {j: SD_COLS[_norm(df.iat[hi, j]).replace(" ", "")] for j in range(df.shape[1])
+                if _norm(df.iat[hi, j]).replace(" ", "") in SD_COLS}
+        order = {n: i for i, n in enumerate(SD_COLS.values())}
+        prod = seas = None
+        groups: dict = {}
+        for i in range(hi + 1, len(df)):
+            a = df.iat[i, 0]
+            if isinstance(a, str) and _norm(a).startswith(("nota", "fonte", "legenda")):
+                break
+            if isinstance(a, str) and a.strip():
+                prod = SD_PRODUCTS.get(_norm(a), a.strip().title())
+            if pd.notna(df.iat[i, 1]):
+                seas = df.iat[i, 1]
+            if prod is None or seas is None:
+                continue
+            label, sy = _season_key(seas)
+            vals = {n: pd.to_numeric(df.iat[i, j], errors="coerce") for j, n in cols.items()}
+            if label is None or all(pd.isna(v) for v in vals.values()):
+                continue
+            rev = "" if pd.isna(df.iat[i, 2]) else str(df.iat[i, 2]).strip()
+            groups.setdefault((prod, label, sy), []).append((rev, vals))
+        for (p, label, sy), revs in groups.items():
+            for rank, (rev, vals) in enumerate(reversed(revs[-2:])):
+                for item, v in vals.items():
+                    if pd.notna(v):
+                        rows.append((p, item, order[item], label, sy, rank, rev, float(v), source))
+
+    soy = next((n for n in book.sheet_names if "soja" in _norm(n)), None)
+    if soy:
+        df = book.parse(soy, header=None)
+        hi = next(i for i in range(len(df)) if _norm(df.iat[i, 0]) == "produto")
+        seasons = {j: _season_key(df.iat[hi + 1, j]) for j in range(1, df.shape[1])}
+        seasons = {j: v for j, v in seasons.items() if v[0]}
+        prod, n_item = None, 0
+        for i in range(hi + 2, len(df)):
+            a = df.iat[i, 0]
+            if not isinstance(a, str):
+                continue
+            if _norm(a).startswith(("nota", "fonte", "estoque de passagem")):
+                break
+            m_prod = re.match(r"\s*\d+\.\s+(?!\d)(.+)", a)
+            m_item = re.match(r"\s*\d+\.\d+\.\s+(.+)", a)
+            if m_item and prod:
+                key = _norm(m_item.group(1))
+                item = SD_SOY_ITEMS.get(key) or next(
+                    (v for k, v in SD_SOY_ITEMS.items() if key.startswith(k[:20])), m_item.group(1).strip())
+                n_item += 1
+                for j, (label, sy) in seasons.items():
+                    v = pd.to_numeric(df.iat[i, j], errors="coerce")
+                    if pd.notna(v):
+                        rows.append((prod, item, 100 + n_item, label, sy, 0, "", float(v), source))
+            elif m_prod:
+                prod = SD_SOY_PRODUCTS.get(_norm(m_prod.group(1)), m_prod.group(1).strip())
+                n_item = 0
+    return pd.DataFrame(rows, columns=["product", "item", "item_order", "season", "start_year",
+                                       "rev_rank", "rev_label", "value", "source"])
+
+
+def fetch_conab_sd() -> pd.DataFrame:
+    url = latest_sd_url()
+    print(f"  CONAB S&D file: {url.rsplit('/', 1)[-1]}")
+    time.sleep(2)
+    df = parse_sd(_get(url, 120, tries=6).content, url.rsplit("/", 1)[-1])
+    print(f"  CONAB S&D: {len(df)} rows, products {sorted(df['product'].unique())}")
+    return df
 
 
 def fetch_magyp() -> pd.DataFrame:
@@ -243,7 +383,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--setup", action="store_true", help="create tables + grants, then exit")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--only", action="append", choices=["conab", "magyp", "statcan", "eurostat"],
+    ap.add_argument("--only", action="append", choices=["conab", "conabsd", "magyp", "statcan", "eurostat"],
                     help="load just these sources (repeatable); the Droplet can't reach datos.magyp.gob.ar")
     args = ap.parse_args()
 
@@ -258,10 +398,13 @@ def main():
         print("Setup done.")
         return
 
-    want = set(args.only or ["conab", "magyp", "statcan", "eurostat"])
+    want = set(args.only or ["conab", "conabsd", "magyp", "statcan", "eurostat"])
     jobs = {
         "conab":    ("CONAB", fetch_conab, "CONAB_SERIES",
                      ["crop", "metric", "region", "level", "start_year", "label", "is_forecast", "value"]),
+        "conabsd":  ("CONAB S&D", fetch_conab_sd, "CONAB_SD",
+                     ["product", "item", "item_order", "season", "start_year", "rev_rank", "rev_label",
+                      "value", "source"]),
         "magyp":    ("MAGyP", fetch_magyp, "MAGYP_SERIES",
                      ["crop", "campania", "start_year", "provincia", "planted_ha", "harvested_ha", "production_t"]),
         "statcan":  ("StatCan", fetch_statcan, "STATCAN_SERIES",
