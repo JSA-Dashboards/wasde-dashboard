@@ -578,14 +578,17 @@ def eurostat_view(country: str, geo: str, members: bool):
     prod = {int(r.year): r.production_kt for r in nat.itertuples() if pd.notna(r.production_kt)}
     area = {int(r.year): r.area_kha for r in nat.itertuples() if pd.notna(r.area_kha)}
     yl = {int(r.year): r.yield_tha * 1000 for r in nat.itertuples() if pd.notna(r.yield_tha)}
+    for y in prod:      # Eurostat leaves yield blank for some aggregates: derive it (kt / kha = t/ha)
+        if y not in yl and area.get(y):
+            yl[y] = prod[y] / area[y] * 1000
     national_kpis(prod, area, yl, f"{country} — Eurostat {{year}}")
     extra = {"USDA PSD": _usda_production("EU")} if country == "EU" else None
     estimates_block(country, prod, "Eurostat", extra)
 
     if members and prod:
         last = max(prod)
-        cur = es[(es.year == last) & (es.geo != "EU27_2020")].set_index("geo_name")
-        prv = es[(es.year == last - 1) & (es.geo != "EU27_2020")].set_index("geo_name")
+        cur = es[(es.year == last) & ~es.geo.isin(["EU27_2020", "EU"])].set_index("geo_name")
+        prv = es[(es.year == last - 1) & ~es.geo.isin(["EU27_2020", "EU"])].set_index("geo_name")
         cur = cur[cur.production_kt > 0].sort_values("production_kt", ascending=False).head(15)
         if not cur.empty:
             style.sec(f"Member states — {last}/{str(last + 1)[-2:]}")
