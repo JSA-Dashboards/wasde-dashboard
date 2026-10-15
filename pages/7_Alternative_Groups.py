@@ -279,8 +279,8 @@ def brazil_tab():
             st.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
                          width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 460))
     st.caption("Source: CONAB — Série Histórica das Safras (gov.br/conab), © Conab, CC BY-ND 3.0. Soybeans and "
-               "corn by crop come from JSA's CONAB workbooks; the newest season and wheat come from CONAB's "
-               "public files, revised monthly.")
+               "corn by crop use JSA's CONAB workbooks for finished history (through 2024/25); 2025/26 onward and "
+               "wheat come from CONAB's website, reloaded monthly.")
     if series_crop == crop:                       # typed-in estimates are for the total crop
         estimates_block("Brazil", {int(y): float(v) for y, v in prod.items()}, "CONAB")
 

@@ -261,22 +261,24 @@ def latest_revisions(commodity: str, snapshot_country: str) -> pd.DataFrame:
 def conab_series(crop: str) -> pd.DataFrame:
     """CONAB historical series (area/yield/production by region and state).
 
-    JSA's own workbooks (CONAB_USER_SERIES, loaded by etl/load_conab_workbooks.py) take priority; CONAB's public
-    files fill whatever they lack (the newest season, wheat)."""
+    JSA's own workbooks (CONAB_USER_SERIES, etl/load_conab_workbooks.py) supply the finished history; CONAB's public
+    files, reloaded monthly by cron, supply everything newer (the workbooks' latest season onward) and wheat."""
     try:
         return _query("""
-            SELECT metric, region, level, start_year, label, is_forecast, value FROM (
+            WITH u AS (            -- the workbooks' finished history; their newest season is left to the website
                 SELECT metric, region, level, start_year, label, is_forecast, value
-                FROM JSA.WASDE.CONAB_USER_SERIES WHERE crop = %s
-                UNION ALL
-                SELECT s.metric, s.region, s.level, s.start_year, s.label, s.is_forecast, s.value
-                FROM JSA.WASDE.CONAB_SERIES s
-                WHERE s.crop = %s AND NOT EXISTS (
-                    SELECT 1 FROM JSA.WASDE.CONAB_USER_SERIES u
-                    WHERE u.crop = s.crop AND u.metric = s.metric AND u.region = s.region
-                      AND u.start_year = s.start_year)
-            ) ORDER BY start_year
-        """, (crop, crop))
+                FROM JSA.WASDE.CONAB_USER_SERIES
+                WHERE crop = %s
+                  AND start_year < (SELECT MAX(start_year) FROM JSA.WASDE.CONAB_USER_SERIES WHERE crop = %s)
+            )
+            SELECT metric, region, level, start_year, label, is_forecast, value FROM u
+            UNION ALL
+            SELECT s.metric, s.region, s.level, s.start_year, s.label, s.is_forecast, s.value
+            FROM JSA.WASDE.CONAB_SERIES s
+            WHERE s.crop = %s AND NOT EXISTS (
+                SELECT 1 FROM u WHERE u.metric = s.metric AND u.region = s.region AND u.start_year = s.start_year)
+            ORDER BY start_year
+        """, (crop, crop, crop))
     except Exception:                                   # table not created yet -> public files only
         return _query("""
             SELECT metric, region, level, start_year, label, is_forecast, value
