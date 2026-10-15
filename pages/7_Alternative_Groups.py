@@ -290,7 +290,7 @@ EU27 = ["BE", "BG", "CZ", "DK", "DE", "EE", "IE", "EL", "ES", "FR", "HR", "IT", 
         "HU", "MT", "NL", "AT", "PL", "PT", "RO", "SI", "SK", "FI", "SE"]
 
 AGENCIES = {
-    "Argentina": ["BAGE", "BCR", "Other"],
+    "Argentina": ["BAGE", "BCR", "Soybean & Corn Advisor", "Other"],
     "Ukraine":   ["UGA", "Ministry of Economy", "UkrAgroConsult", "APK-Inform", "Other"],
     "Russia":    ["SovEcon", "IKAR", "Ministry of Agriculture", "Rosstat", "Other"],
     "Australia": ["ABARES", "Other"],
@@ -298,7 +298,8 @@ AGENCIES = {
     "France":    ["Agreste (Ministry)", "FranceAgriMer", "Strategie Grains", "Argus", "Other"],
     "Canada":    ["AAFC", "Other"],
     "Mexico":    ["SIAP (Agriculture ministry)", "Other"],
-    "Brazil":    ["Other"],
+    "Brazil":    ["Soybean & Corn Advisor", "Other"],
+    "United States": ["Soybean & Corn Advisor", "Other"],
 }
 for _agencies in AGENCIES.values():           # USDA FAS attaché (GAIN) and Expana apply to every origin
     _agencies[-1:-1] = ["USDA Attaché (GAIN)", "Expana"]
@@ -315,7 +316,10 @@ AGENCY_HINTS = {
                  "French crop estimates; Strategie Grains and Argus publish private forecasts.",
     "Mexico":    "SIAP (Servicio de Información Agroalimentaria y Pesquera) is the official source, but its data "
                  "host is unreachable from outside Mexico, so its Cierre agrícola / Avance de siembras figures are typed in.",
-    "Brazil":    "CONAB is loaded automatically above; add any other Brazilian estimate here.",
+    "Brazil":    "CONAB is loaded automatically above; the Soybean & Corn Advisor's weekly report is loaded by "
+                 "etl/load_advisor_report.py; add any other Brazilian estimate here.",
+    "United States": "USDA (WASDE / Crop Production) is the baseline; the Soybean & Corn Advisor's weekly report "
+                 "carries its own U.S. corn and soybean estimates.",
     "Canada":    "Statistics Canada is loaded automatically; AAFC (Agriculture and Agri-Food Canada) publishes a "
                  "monthly outlook with its own production forecasts.",
 }
@@ -784,35 +788,160 @@ def psd_balance(country: str, ccode: str):
                "the Balance Sheet page has the same table for any country with the full history and CSV download.")
 
 
-tab_br, tab_ar, tab_ua, tab_ru, tab_au, tab_eu, tab_fr, tab_ca, tab_mx = st.tabs(
-    ["Brazil · CONAB", "Argentina · BAGE / BCR", "Ukraine", "Russia", "Australia",
+def _auto_source(country: str):
+    """The automatic official/statistical series for a country: (name, {start_year: (prod_kt, area_kha)})."""
+    try:
+        if country == "Brazil" and crop in _CORE:
+            df = db.conab_series(crop)
+            t = df[df.level == "total"]
+            p = t[t.metric == "production_kt"].set_index("start_year").value
+            a = t[t.metric == "area_kha"].set_index("start_year").value
+            return "CONAB", {int(y): (v, a.get(y)) for y, v in p.items()}
+        if country == "Argentina" and crop in _CORE:
+            mg = db.magyp_series(crop)
+            g = mg.groupby("start_year")[["planted_ha", "production_t"]].sum(min_count=1)
+            return "MAGyP (ministry)", {int(y): (r.production_t / 1000, r.planted_ha / 1000)
+                                        for y, r in g.iterrows() if pd.notna(r.production_t)}
+        if country == "Canada":
+            sc = db.statcan_series(crop)
+            n = sc[sc.geo == "Canada"]
+            return "Statistics Canada", {int(r.year): (r.production_t / 1000,
+                                                       r.planted_ha / 1000 if pd.notna(r.planted_ha) else None)
+                                         for r in n.itertuples() if pd.notna(r.production_t)}
+        if country == "EU":
+            es = db.eurostat_series(crop)
+            n = es[es.geo == "EU27_2020"]
+            return "Eurostat", {int(r.year): (r.production_kt, r.area_kha)
+                                for r in n.itertuples() if pd.notna(r.production_kt)}
+    except Exception:
+        pass
+    return None, {}
+
+
+@st.fragment
+def compare_block(country: str, ccode: str):
+    """USDA vs every other source for one marketing year: production, area, yield and the gap to USDA."""
+    name = PSD_CROPS.get(crop, crop)
+    code = pm.COMMODITIES.get(name)
+    usda = {}
+    if code and code in db.psd_loaded_commodities():
+        h = db.psd_history(code, ccode)
+        if not h.empty:
+            def ser(aid):
+                return h[h.attribute_id == aid].drop_duplicates("market_year").set_index("market_year").value
+            prod, planted, harv = ser(28), ser(1), ser(4)
+            for y, v in prod.items():
+                area = planted.get(y) if pd.notna(planted.get(y)) else harv.get(y)
+                usda[int(y)] = (float(v), float(area) if area is not None and pd.notna(area) else None)
+    ag = db.agency_estimates(country)
+    ag = ag[ag.crop == crop].copy() if not ag.empty else ag
+    auto_name, auto = _auto_source(country)
+    if not usda and ag.empty and not auto:
+        return
+    ag_years = sorted({_campaign_year(c) for c in ag.campaign}) if not ag.empty else []
+    options = sorted(set(ag_years) | ({max(usda)} if usda else set()) | ({max(auto)} if auto else set()),
+                     reverse=True)[:8]
+    if not options:
+        return
+    style.sec(f"{country} — USDA vs other estimates")
+    yr = st.selectbox("Marketing year", options, index=0, key=f"cmp_{ccode}_{crop}",
+                      format_func=lambda y: f"{y}/{str(y + 1)[-2:]}")
+
+    rows = []                                    # (source, kind, prod_kt, area_kha, report note)
+    if yr in usda:
+        rows.append(("USDA (PSD)", "usda", usda[yr][0], usda[yr][1], "latest WASDE"))
+    if auto_name and yr in auto:
+        rows.append((auto_name, "auto", auto[yr][0], auto[yr][1], "official series"))
+    if not ag.empty:
+        cur = ag[ag.campaign.map(_campaign_year) == yr].groupby("agency", sort=False).head(1)
+        for r in cur.itertuples():
+            if pd.notna(r.production_mmt):
+                rows.append((r.agency, "agency", r.production_mmt * 1000,
+                             r.planted_mha * 1000 if pd.notna(r.planted_mha) else None, f"{r.report_date}"))
+    if not rows:
+        st.info(f"No estimates for {yr}/{str(yr + 1)[-2:]} yet.")
+        return
+    base = usda.get(yr, (None, None))[0]
+
+    def fmt_gap(v):
+        return "—" if v is None else f"{v:+,.1f}"
+
+    tbl = []
+    for src, kind, p, a, note in rows:
+        gap = None if base is None or kind == "usda" else p - base
+        tbl.append({
+            "Source": src,
+            f"Production ({ul})": f"{cvt(p, crop, imperial):,.1f}",
+            f"vs USDA ({ul})": fmt_gap(None if gap is None else cvt(gap, crop, imperial)),
+            "vs USDA %": "—" if gap is None else f"{gap / base * 100:+.1f}%",
+            "Area (M ha)": f"{a / 1000:,.2f}" if a else "—",
+            f"Yield ({yu})": f"{yld(p / a * 1000, crop, imperial):,.2f}" if a else "—",
+            "As of": note,
+        })
+    st.dataframe(pd.DataFrame(tbl).style.map(color_delta, subset=["vs USDA %"]).set_properties(
+        **{"font-size": "0.85rem"}), width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 360))
+
+    colors = {"usda": C_GREEN, "auto": C_BLUE, "agency": C_GOLD}
+    fig = go.Figure(go.Bar(
+        x=[r[0] for r in rows], y=[cvt(r[2], crop, imperial) for r in rows],
+        marker_color=[colors[r[1]] for r in rows],
+        text=[f"{cvt(r[2], crop, imperial):,.1f}" for r in rows], textposition="outside", cliponaxis=False,
+        hovertemplate="%{x}: %{y:,.1f}<extra></extra>"))
+    fig.update_layout(**style.plot_layout(
+        title=dict(text=f"{country} {crop.lower()} {yr}/{str(yr + 1)[-2:]} production — USDA vs other estimates",
+                   font=dict(size=13)), yaxis_title=ul, height=330, showlegend=False))
+    st.plotly_chart(fig, width="stretch")
+    st.caption("Green = USDA PSD, blue = official/statistical series, gold = typed-in or emailed agency estimates "
+               "(newest report per agency). Area is planted where the source gives it, otherwise USDA's harvested area; "
+               "marketing years follow each source's own convention.")
+
+
+@st.fragment
+def us_tab():
+    usda_country_tab("United States")
+
+
+tab_br, tab_ar, tab_us, tab_ua, tab_ru, tab_au, tab_eu, tab_fr, tab_ca, tab_mx = st.tabs(
+    ["Brazil · CONAB", "Argentina · BAGE / BCR", "United States", "Ukraine", "Russia", "Australia",
      "EU · Eurostat", "France", "Canada · StatCan", "Mexico"])
 with tab_br:
     brazil_tab()
+    compare_block("Brazil", "BR")
     conab_balance()
     psd_balance("Brazil", "BR")
 with tab_ar:
     argentina_tab()
+    compare_block("Argentina", "AR")
     psd_balance("Argentina", "AR")
+with tab_us:
+    us_tab()
+    compare_block("United States", "US")
+    psd_balance("United States", "US")
 with tab_ua:
     ukraine_tab()
+    compare_block("Ukraine", "UP")
     psd_balance("Ukraine", "UP")
 with tab_ru:
     russia_tab()
+    compare_block("Russia", "RS")
     psd_balance("Russia", "RS")
 with tab_au:
     australia_tab()
+    compare_block("Australia", "AS")
     psd_balance("Australia", "AS")
 with tab_eu:
     eu_tab()
+    compare_block("EU", "E4")
     psd_balance("EU", "E4")
 with tab_fr:
     france_tab()
 with tab_ca:
     canada_tab()
+    compare_block("Canada", "CA")
     psd_balance("Canada", "CA")
 with tab_mx:
     mexico_tab()
+    compare_block("Mexico", "MX")
     psd_balance("Mexico", "MX")
 
 style.disclaimer()
