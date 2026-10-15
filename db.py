@@ -200,6 +200,60 @@ def bucket_history(commodity: str,
     """, (commodity, country_code))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def conab_series(crop: str) -> pd.DataFrame:
+    """CONAB historical series (area/yield/production by region and state)."""
+    return _query("""
+        SELECT metric, region, level, start_year, label, is_forecast, value
+        FROM JSA.WASDE.CONAB_SERIES
+        WHERE crop = %s
+        ORDER BY start_year
+    """, (crop,))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def magyp_series(crop: str) -> pd.DataFrame:
+    """Argentine ministry (MAGyP) campaign estimates by province."""
+    return _query("""
+        SELECT campania, start_year, provincia, planted_ha, harvested_ha, production_t
+        FROM JSA.WASDE.MAGYP_SERIES
+        WHERE crop = %s
+        ORDER BY start_year
+    """, (crop,))
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def bage_estimates() -> pd.DataFrame:
+    """BAGE (Bolsa de Cereales de Buenos Aires) estimates, typed in by hand."""
+    return _query("""
+        SELECT id, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note
+        FROM JSA.WASDE.BAGE_ESTIMATES
+        ORDER BY report_date DESC, id DESC
+    """)
+
+
+def _write(sql: str, params: tuple) -> None:
+    cur = _conn().cursor()
+    try:
+        cur.execute(sql, params)
+    finally:
+        cur.close()
+    bage_estimates.clear()
+
+
+def bage_add(crop: str, campaign: str, report_date, planted_mha, production_mmt,
+             yield_tha, note: str) -> None:
+    _write("""
+        INSERT INTO JSA.WASDE.BAGE_ESTIMATES
+            (crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note or None))
+
+
+def bage_delete(row_id: int) -> None:
+    _write("DELETE FROM JSA.WASDE.BAGE_ESTIMATES WHERE id = %s", (int(row_id),))
+
+
 def snowflake_available() -> bool:
     """True if Snowflake creds are configured."""
     return bool(_env("SNOWFLAKE_ACCOUNT") and _env("SNOWFLAKE_USER"))
