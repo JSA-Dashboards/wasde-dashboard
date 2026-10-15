@@ -125,7 +125,13 @@ def make_view(n: pd.DataFrame, view: str, prev: pd.DataFrame | None = None) -> p
     elif view == "5ya":
         out = full - full.shift(1).rolling(5, min_periods=3).mean()
     else:  # "lr"
-        out = full - derive(prev).reindex(full.index) if prev is not None else full * np.nan
+        if prev is None:
+            return full * np.nan
+        p = derive(prev).reindex(full.index)
+        out = full - p
+        if {"production", "area_harvested"} <= set(full.columns):     # yield change from production / area
+            out["yield"] = (full["production"] / full["area_harvested"].where(full["area_harvested"] > 0)
+                            - p["production"] / p["area_harvested"].where(p["area_harvested"] > 0))
     return out
 
 
@@ -166,6 +172,8 @@ def _decimals(key: str, rowmax: float, commodity: str, system: str) -> int:
 def _fmt(x, dec: int, signed: bool, pct: bool) -> str:
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return "—"
+    if signed and round(x, dec) == 0:
+        return f"{0:.{dec}f}" + ("pp" if pct else "")
     s = f"{x:+,.{dec}f}" if signed else f"{x:,.{dec}f}"
     return s + ("pp" if (pct and signed) else "%" if pct else "")
 
@@ -195,7 +203,7 @@ def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: s
         for y in years_desc:
             x = d.at[y, k] if (y in d.index) else np.nan
             cls = "cur" if y == latest_year else ""
-            if signed and isinstance(x, float) and not np.isnan(x) and abs(x) > 1e-9:
+            if signed and isinstance(x, float) and not np.isnan(x) and round(x, dec[k]) != 0:
                 cls += " pos" if x > 0 else " neg"
             cells.append(f"<td class='{cls.strip()}'>{_fmt(x, dec[k], signed, kind == 'pct')}</td>")
         body.append(f"<tr class='{style}'><th class='lab'>{html.escape(label)}"

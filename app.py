@@ -221,7 +221,7 @@ with ch1:
                                  yaxis="y2"))
     fig.update_layout(**style.plot_layout(
         title=dict(text="Production · Total Use · Ending Stocks", font=dict(size=13)),
-        barmode="group", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), xaxis=dict(nticks=14, tickangle=-45), yaxis=dict(title=labels["qty"], gridcolor=style.BORDER),
+        barmode="group", legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0), xaxis=dict(**style._AXIS, nticks=14, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), yaxis=dict(title=labels["qty"], gridcolor=style.BORDER),
         yaxis2=dict(title="Ending Stocks", overlaying="y", side="right", gridcolor="rgba(0,0,0,0)", zeroline=False),
         height=340))
     st.plotly_chart(fig, width="stretch")
@@ -237,7 +237,7 @@ with ch2:
                        annotation_text=f"range avg {avg:.1f}%", annotation_position="top right")
         fig2.update_layout(**style.plot_layout(
             title=dict(text="Stocks-to-Use %", font=dict(size=13)),
-            xaxis=dict(nticks=14, tickangle=-45), yaxis=dict(title="%", gridcolor=style.BORDER), height=340, showlegend=False))
+            xaxis=dict(**style._AXIS, nticks=14, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), yaxis=dict(title="%", gridcolor=style.BORDER), height=340, showlegend=False))
         st.plotly_chart(fig2, width="stretch")
 
 use_keys = [k for k in ("feed", "feed_waste", "crush", "food_use", "fsi", "industrial", "loss", "exports")
@@ -249,7 +249,7 @@ if len(use_keys) >= 2:
         fig3.add_trace(go.Bar(x=[mkt(y) for y in chart_years], y=[cur_view.at[y, k] for y in chart_years],
                               name=bs.LABEL[k], marker_color=palette[i % len(palette)]))
     fig3.update_layout(**style.plot_layout(
-        title=dict(text="Use components (stacked)", font=dict(size=13)), barmode="stack", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0), xaxis=dict(nticks=20, tickangle=-45), 
+        title=dict(text="Use components (stacked)", font=dict(size=13)), barmode="stack", legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0), xaxis=dict(**style._AXIS, nticks=20, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), 
         yaxis=dict(title=labels["qty"], gridcolor=style.BORDER), height=340))
     st.plotly_chart(fig3, width="stretch")
 
