@@ -240,7 +240,7 @@ with ch2:
             xaxis=dict(**style._AXIS, nticks=14, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), yaxis=dict(title="%", gridcolor=style.BORDER), height=340, showlegend=False))
         st.plotly_chart(fig2, width="stretch")
 
-use_keys = [k for k in ("feed", "feed_waste", "crush", "food_use", "fsi", "industrial", "loss", "exports")
+use_keys = [k for k in ("feed", "feed_waste", "crush", "food_use", "fsi", "industrial", "mill_use", "loss", "exports")
             if k in cur_view and cur_view.loc[chart_years, k].notna().any()]
 if len(use_keys) >= 2:
     palette = [C_GOLD, "#d9b87a", C_GREEN, C_LIME, "#9b89c4", "#c4785a", "#8c8c8c", C_BLUE]

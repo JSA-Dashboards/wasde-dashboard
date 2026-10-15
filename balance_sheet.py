@@ -30,6 +30,7 @@ ROWS = [
     ("food_use",         "Food Use",                "Demand",       "qty",   ""),
     ("fsi",              "Food, Seed & Industrial", "Demand",       "qty",   ""),
     ("industrial",       "Industrial Use",          "Demand",       "qty",   ""),
+    ("mill_use",         "Mill Use",                "Demand",       "qty",   ""),
     ("loss",             "Loss",                    "Demand",       "qty",   ""),
     ("domestic",         "Domestic Consumption",    "Demand",       "qty",   "sub"),
     ("exports",          "Exports",                 "Demand",       "qty",   ""),
@@ -96,6 +97,8 @@ def derive(b: pd.DataFrame) -> pd.DataFrame:
         n["stu"] = (n["ending_stocks"] / n["total_use"].where(n["total_use"] > 0) * 100)
     if "yield" not in n and "production" in n and "area_harvested" in n:
         n["yield"] = n["production"] / n["area_harvested"].where(n["area_harvested"] > 0)
+    if "dom125" not in n and "dom142" in n:          # cotton: consumption is reported as 'Domestic Use'
+        n["mill_use"] = n["dom142"]
     return n.drop(columns=[c for c in ("dom125", "dom142") if c in n])
 
 
