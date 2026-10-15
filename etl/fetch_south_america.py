@@ -162,8 +162,8 @@ def _month_of(url: str) -> int:
     return max((MONTHS_PT[t] for t in toks if t in MONTHS_PT), default=0)
 
 
-def latest_sd_url() -> str:
-    """Newest monthly 'Quadro de Oferta e Demanda de Graos' workbook (landing -> newest year page -> newest month)."""
+def sd_urls() -> list[str]:
+    """Newest monthly workbook of each year that has files, newest year first (older years are Power BI only)."""
     land = _get(CONAB_SD_LANDING, 90, tries=6).text
     years = {}
     for h in re.findall(r'href="([^"]*quadro-de-oferta-e-demanda-de-graos[^"]*)"', land):
@@ -172,14 +172,17 @@ def latest_sd_url() -> str:
         m = re.search(r"(20\d\d)", h)
         if m:
             years.setdefault(int(m.group(1)), h)
+    out = []
     for y in sorted(years, reverse=True):
         time.sleep(2)
         page = _get(years[y], 90, tries=6).text
         files = {h for h in re.findall(r'href="([^"]*\.(?:xlsx|xls|ods))"', page, re.I)}
-        files = [f for f in files if "oferta" in f.lower()]
+        files = [f for f in files if "oferta" in f.lower() and _month_of(f)]
         if files:
-            return max(files, key=_month_of)
-    raise RuntimeError("no CONAB supply/demand workbook found")
+            out.append(max(files, key=_month_of))
+    if not out:
+        raise RuntimeError("no CONAB supply/demand workbook found")
+    return out
 
 
 def _sd_book(content: bytes) -> pd.ExcelFile:
@@ -264,12 +267,19 @@ def parse_sd(content: bytes, source: str) -> pd.DataFrame:
 
 
 def fetch_conab_sd() -> pd.DataFrame:
-    url = latest_sd_url()
-    print(f"  CONAB S&D file: {url.rsplit('/', 1)[-1]}")
-    time.sleep(2)
-    df = parse_sd(_get(url, 120, tries=6).content, url.rsplit("/", 1)[-1])
-    print(f"  CONAB S&D: {len(df)} rows, products {sorted(df['product'].unique())}")
-    return df
+    """Latest workbook first; an older year's file only adds (product, season) pairs the newer one dropped."""
+    frames, seen = [], set()
+    for url in sd_urls():
+        time.sleep(2)
+        df = parse_sd(_get(url, 120, tries=6).content, url.rsplit("/", 1)[-1])
+        keys = set(zip(df["product"], df["season"]))
+        df = df[[(p, se) not in seen for p, se in zip(df["product"], df["season"])]]
+        print(f"  CONAB S&D file: {url.rsplit('/', 1)[-1]} -> {len(df)} new rows")
+        seen |= keys
+        frames.append(df)
+    out = pd.concat(frames, ignore_index=True)
+    print(f"  CONAB S&D: {len(out)} rows, products {sorted(out['product'].unique())}")
+    return out
 
 
 def fetch_magyp() -> pd.DataFrame:
