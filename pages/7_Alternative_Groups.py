@@ -1,5 +1,5 @@
 """
-Page 7 — Origin crop estimates
+Page 7 — Alternative Groups: origin crop estimates
 Brazil: CONAB historical series (area / yield / production by state), loaded to Snowflake by
 etl/fetch_south_america.py.
 Argentina: official MAGyP campaign history. Ukraine / Russia / Australia: USDA PSD baseline.
@@ -44,7 +44,7 @@ from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_ORANGE, C_RED  # noqa: E402
 from units import convert, unit_label  # noqa: E402
 
 st.set_page_config(
-    page_title="JSA WASDE — Origins",
+    page_title="JSA WASDE — Alternative Groups",
     page_icon="🌎",
     layout="wide",
     initial_sidebar_state="auto",
@@ -120,7 +120,7 @@ yu = yld_unit(imperial)
 st.markdown(
     f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.35rem;"
     f"font-weight:600;color:{style.TEXT};margin-bottom:2px'>"
-    f"{crop} — Origin crop estimates</div>",
+    f"{crop} — Alternative groups: crop estimates</div>",
     unsafe_allow_html=True,
 )
 st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsafe_allow_html=True)

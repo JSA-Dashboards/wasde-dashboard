@@ -11,7 +11,7 @@ CONAB: historical-series workbooks (area / yield / production by region and stat
 MAGyP: official Argentine estimates CSV (CC BY 4.0), aggregated here to province level.
 Agency estimates with no automated feed (BAGE and BCR for Argentina, UGA/ministry/UkrAgroConsult for
 Ukraine, SovEcon/IKAR for Russia, ABARES for Australia - their sites are bot-protected or only publish
-reports) are typed in on the Origins page and live in JSA.WASDE.AGENCY_ESTIMATES.
+reports) are typed in on the Alternative Groups page and live in JSA.WASDE.AGENCY_ESTIMATES.
 """
 
 from __future__ import annotations
