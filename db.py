@@ -65,8 +65,6 @@ def _conn():
 
 def _execute(sql: str, params: tuple, fetch: bool):
     """Run a statement; if the cached session has expired, reconnect and retry once."""
-    import snowflake.connector
-
     for attempt in (0, 1):
         cur = None
         try:
@@ -76,13 +74,16 @@ def _execute(sql: str, params: tuple, fetch: bool):
                 return None
             cols = [d[0].lower() for d in cur.description]
             return pd.DataFrame(cur.fetchall(), columns=cols)
-        except snowflake.connector.errors.Error:
+        except Exception:          # incl. connection resets mid-response, not just Snowflake errors
             if attempt:
                 raise
             _conn.clear()
         finally:
-            if cur is not None:
-                cur.close()
+            try:
+                if cur is not None:
+                    cur.close()
+            except Exception:
+                pass
 
 
 def _query(sql: str, params: tuple = ()) -> pd.DataFrame:

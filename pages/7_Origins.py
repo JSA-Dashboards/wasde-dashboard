@@ -9,6 +9,7 @@ each tab (password-gated) and stored in JSA.WASDE.AGENCY_ESTIMATES.
 
 import hmac
 import os
+from urllib.parse import quote
 from datetime import date
 
 import pandas as pd
@@ -246,6 +247,7 @@ def brazil_tab():
                          width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 460))
     st.caption("Source: CONAB — Série Histórica das Safras (gov.br/conab). © Conab, licensed CC BY-ND 3.0. "
                "Latest column is CONAB's current estimate, revised monthly.")
+    estimates_block("Brazil", {int(y): float(v) for y, v in prod.items()}, "CONAB")
 
 
 # ── Agency estimates (typed in) vs an official/USDA baseline ──────────────────
@@ -260,7 +262,11 @@ AGENCIES = {
     "EU":        ["European Commission", "EC MARS (JRC)", "Strategie Grains", "COCERAL", "Argus", "Other"],
     "France":    ["Agreste (Ministry)", "FranceAgriMer", "Strategie Grains", "Argus", "Other"],
     "Canada":    ["AAFC", "Other"],
+    "Mexico":    ["SIAP (Agriculture ministry)", "Other"],
+    "Brazil":    ["Other"],
 }
+for _agencies in AGENCIES.values():           # USDA FAS attaché (GAIN) and Expana apply to every origin
+    _agencies[-1:-1] = ["USDA Attaché (GAIN)", "Expana"]
 AGENCY_HINTS = {
     "Argentina": "BAGE = Bolsa de Cereales de Buenos Aires (weekly Panorama Agrícola + monthly estimates); "
                  "BCR = Bolsa de Comercio de Rosario (monthly report).",
@@ -272,6 +278,9 @@ AGENCY_HINTS = {
                  "COCERAL and Argus publish private forecasts.",
     "France":    "Agreste (the agriculture ministry's statistics service) and FranceAgriMer publish the official "
                  "French crop estimates; Strategie Grains and Argus publish private forecasts.",
+    "Mexico":    "SIAP (Servicio de Información Agroalimentaria y Pesquera) is the official source, but its data "
+                 "host is unreachable from outside Mexico, so its Cierre agrícola / Avance de siembras figures are typed in.",
+    "Brazil":    "CONAB is loaded automatically above; add any other Brazilian estimate here.",
     "Canada":    "Statistics Canada is loaded automatically; AAFC (Agriculture and Agri-Food Canada) publishes a "
                  "monthly outlook with its own production forecasts.",
 }
@@ -354,7 +363,10 @@ def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dic
                      width="stretch", hide_index=True, height=min(60 + len(show) * 36, 300))
 
     entry_form(country, ag)
-    st.caption(AGENCY_HINTS[country] + " Figures are typed in from the published reports.")
+    kw = {"EU": "European Union"}.get(country, country)
+    st.caption(AGENCY_HINTS[country] + " Figures are typed in from the published reports. "
+               f"[USDA FAS attaché (GAIN) reports for {kw}](https://www.fas.usda.gov/data/search?keyword={quote(kw)}) "
+               "open FAS's report search; FAS blocks automated access, so attaché figures are typed in too.")
 
 
 def entry_form(country: str, ag: pd.DataFrame):
@@ -484,6 +496,11 @@ def usda_country_tab(country: str):
         kpi(k[3], "Exports", "exports_kt", lambda v: cvt(v, crop, imperial), lambda v: f"{v:,.1f}", ul)
     estimates_block(country, baseline, "USDA PSD")
     st.caption(f"USDA FAS PSD, {country}, last five marketing years; refreshed hourly.")
+
+
+@st.fragment
+def mexico_tab():
+    usda_country_tab("Mexico")
 
 
 @st.fragment
@@ -623,9 +640,9 @@ def france_tab():
     eurostat_view("France", "FR", members=False)
 
 
-tab_br, tab_ar, tab_ua, tab_ru, tab_au, tab_eu, tab_fr, tab_ca = st.tabs(
+tab_br, tab_ar, tab_ua, tab_ru, tab_au, tab_eu, tab_fr, tab_ca, tab_mx = st.tabs(
     ["Brazil · CONAB", "Argentina · BAGE / BCR", "Ukraine", "Russia", "Australia",
-     "EU · Eurostat", "France", "Canada · StatCan"])
+     "EU · Eurostat", "France", "Canada · StatCan", "Mexico"])
 with tab_br:
     brazil_tab()
 with tab_ar:
@@ -642,5 +659,7 @@ with tab_fr:
     france_tab()
 with tab_ca:
     canada_tab()
+with tab_mx:
+    mexico_tab()
 
 style.disclaimer()

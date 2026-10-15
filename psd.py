@@ -12,7 +12,7 @@ COMM_CODES = {
     "Soybeans": "2222000", "Corn": "0440000", "Wheat": "0410000",
     "Barley": "0430000", "Canola": "2226000",
 }
-COUNTRY_CODES = {"Ukraine": "UP", "Russia": "RS", "Australia": "AS", "EU": "E4", "Canada": "CA"}
+COUNTRY_CODES = {"Ukraine": "UP", "Russia": "RS", "Australia": "AS", "EU": "E4", "Canada": "CA", "Mexico": "MX"}
 ATTR = {"area_kha": "4", "production_kt": "28", "exports_kt": "88", "ending_stocks_kt": "176", "yield_tha": "184"}
 
 
