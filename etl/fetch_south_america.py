@@ -39,6 +39,10 @@ CONAB_FILES = {
     "Soybeans": f"{CONAB_BASE}/soja/sojaseriehist.xls",
     "Corn":     f"{CONAB_BASE}/milho/milhototalseriehist.xls",
     "Wheat":    f"{CONAB_BASE}/trigo/trigoseriehist.xls",
+    # Brazil corn by crop: 1st (summer), 2nd (safrinha, the big export crop) and 3rd (northeast)
+    "Corn (1st crop)": f"{CONAB_BASE}/milho/milho1aseriehist.xls",
+    "Corn (2nd crop)": f"{CONAB_BASE}/milho/milho2aseriehist.xls",
+    "Corn (3rd crop)": f"{CONAB_BASE}/milho/milho3aseriehist.xls",
 }
 CONAB_METRICS = ["area_kha", "yield_kgha", "production_kt"]   # sheet order in every workbook
 CONAB_REGIONS = {"NORTE", "NORDESTE", "CENTRO-OESTE", "SUDESTE", "SUL", "NORTE/NORDESTE", "CENTRO-SUL"}
@@ -120,8 +124,8 @@ def parse_conab(crop: str, content: bytes) -> pd.DataFrame:
 def fetch_conab() -> pd.DataFrame:
     frames = []
     for crop, url in CONAB_FILES.items():
-        r = requests.get(url, headers=UA, timeout=90)
-        r.raise_for_status()
+        r = _get(url, 90, tries=6)                  # gov.br resets connections at random; retry with backoff
+        time.sleep(2)
         df = parse_conab(crop, r.content)
         print(f"  CONAB {crop}: {len(df)} rows, latest {df.start_year.max()}")
         frames.append(df)
@@ -152,7 +156,7 @@ def _get(url: str, timeout: int = 180, tries: int = 3):
     last = None
     for attempt in range(tries):
         if attempt:
-            time.sleep(5 * attempt)
+            time.sleep(4 * attempt)
         try:
             r = requests.get(url, headers=UA, timeout=timeout)
             r.raise_for_status()

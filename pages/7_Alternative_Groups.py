@@ -132,12 +132,20 @@ if not db.snowflake_available():
 
 
 # ── Brazil · CONAB ────────────────────────────────────────────────────────────
+CORN_CROPS = {"Total": "Corn", "1st crop": "Corn (1st crop)", "2nd crop (safrinha)": "Corn (2nd crop)",
+              "3rd crop": "Corn (3rd crop)"}
+
 @st.fragment
 def brazil_tab():
     if crop not in _CORE:
         st.info("CONAB series are loaded for soybeans, corn and wheat.")
         return
-    df = db.conab_series(crop)
+    series_crop, what = crop, crop.lower()
+    if crop == "Corn":
+        pick = st.segmented_control("Corn crop", list(CORN_CROPS), default="Total", key="br_corn_crop") or "Total"
+        series_crop = CORN_CROPS[pick]
+        what = "corn" if pick == "Total" else f"corn, {pick}"
+    df = db.conab_series(series_crop)
     if df.empty:
         st.info("No CONAB data loaded yet. Run `python etl/fetch_south_america.py`.")
         return
@@ -192,7 +200,7 @@ def brazil_tab():
             hovertemplate="%{x}: %{y:,.1f}<extra></extra>",
         ))
         fig.update_layout(**style.plot_layout(
-            title=dict(text=f"Brazil {crop.lower()} production — CONAB", font=dict(size=13)),
+            title=dict(text=f"Brazil {what} production — CONAB", font=dict(size=13)),
             yaxis_title=ul, height=320, showlegend=False))
         st.plotly_chart(fig, width="stretch")
     with c2:
@@ -202,9 +210,31 @@ def brazil_tab():
             hovertemplate="%{x}: %{y:,.2f}<extra></extra>",
         ))
         fig.update_layout(**style.plot_layout(
-            title=dict(text=f"Brazil {crop.lower()} yield — CONAB", font=dict(size=13)),
+            title=dict(text=f"Brazil {what} yield — CONAB", font=dict(size=13)),
             yaxis_title=yu, height=320, showlegend=False))
         st.plotly_chart(fig, width="stretch")
+
+    if crop == "Corn" and series_crop == "Corn":
+        parts = {}
+        for label_, name_ in (("1st crop", "Corn (1st crop)"), ("2nd crop (safrinha)", "Corn (2nd crop)"),
+                              ("3rd crop", "Corn (3rd crop)")):
+            d_ = db.conab_series(name_)
+            t_ = d_[(d_.level == "total") & (d_.metric == "production_kt")].set_index("start_year")["value"]
+            if not t_.empty:
+                parts[label_] = t_
+        if parts:
+            style.sec("Corn production by crop")
+            fig = go.Figure()
+            for (label_, t_), color_ in zip(parts.items(), (C_GREEN, C_GOLD, C_BLUE)):
+                fig.add_trace(go.Bar(x=[labels[y] for y in years],
+                                     y=[pconv(float(t_.get(y, 0) or 0)) for y in years],
+                                     name=label_, marker_color=color_))
+            fig.update_layout(**style.plot_layout(
+                title=dict(text="Brazil corn production by crop — CONAB", font=dict(size=13)),
+                barmode="stack", yaxis_title=ul, height=340,
+                legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0),
+                margin=dict(l=10, r=10, t=75, b=45)))
+            st.plotly_chart(fig, width="stretch")
 
     # States for the latest year
     st_df = df[(df.level == "state") & (df.start_year.isin([last, last - 1]))]
@@ -247,7 +277,8 @@ def brazil_tab():
                          width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 460))
     st.caption("Source: CONAB — Série Histórica das Safras (gov.br/conab). © Conab, licensed CC BY-ND 3.0. "
                "Latest column is CONAB's current estimate, revised monthly.")
-    estimates_block("Brazil", {int(y): float(v) for y, v in prod.items()}, "CONAB")
+    if series_crop == crop:                       # typed-in estimates are for the total crop
+        estimates_block("Brazil", {int(y): float(v) for y, v in prod.items()}, "CONAB")
 
 
 # ── Agency estimates (typed in) vs an official/USDA baseline ──────────────────
