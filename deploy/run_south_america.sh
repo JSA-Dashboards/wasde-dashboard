@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# run_south_america.sh — monthly CONAB (Brazil) + MAGyP (Argentina) reload, run by cron on the Droplet.
-# Re-downloads CONAB's soy/corn/wheat historical-series workbooks and MAGyP's estimates CSV, then
-# replaces JSA.WASDE.CONAB_SERIES / MAGYP_SERIES. Idempotent, so the catch-up run is harmless.
+# run_south_america.sh — monthly CONAB (Brazil) reload, run by cron on the Droplet.
+# Re-downloads CONAB's soy/corn/wheat historical-series workbooks and replaces
+# JSA.WASDE.CONAB_SERIES. Idempotent, so the catch-up run is harmless.
+# MAGyP (Argentina) is NOT loaded here: the Droplet cannot reach datos.magyp.gob.ar (connect
+# timeout, verified 2026-10-14). Refresh it from a desktop with `etl/fetch_south_america.py --only magyp`.
 # CONAB publishes its monthly crop survey around the 10th-15th and refreshes the workbooks
 # the same day or a day later; cron runs on the 16th with a catch-up on the 22nd.
 # BAGE has no feed (bot-protected site); its numbers are typed in on the dashboard.
@@ -26,7 +28,7 @@ rc=0
 {
     echo "=== South America ETL start $(date -Is) ==="
     git pull --ff-only || echo "git pull failed — continuing with the code on disk"
-    "$VENV/bin/python" etl/fetch_south_america.py
+    "$VENV/bin/python" etl/fetch_south_america.py --only conab
     rc=$?    # capture immediately — must precede any other command
     echo "=== South America ETL finished $(date -Is) rc=$rc ==="
 } >>"$LOG" 2>&1

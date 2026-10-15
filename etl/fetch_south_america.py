@@ -145,6 +145,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--setup", action="store_true", help="create tables + grants, then exit")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--only", choices=["conab", "magyp"],
+                    help="load just one source (the Droplet can't reach datos.magyp.gob.ar, so it runs --only conab)")
     args = ap.parse_args()
 
     if args.setup:
@@ -158,20 +160,25 @@ def main():
         print("Setup done.")
         return
 
-    print("Fetching CONAB…")
-    conab = fetch_conab()
-    print("Fetching MAGyP…")
-    magyp = fetch_magyp()
+    conab = magyp = None
+    if args.only in (None, "conab"):
+        print("Fetching CONAB…")
+        conab = fetch_conab()
+    if args.only in (None, "magyp"):
+        print("Fetching MAGyP…")
+        magyp = fetch_magyp()
     if args.dry_run:
         print("Dry run: nothing written.")
         return
     conn = _sf_connect()
-    _replace(conn, "CONAB_SERIES", conab,
-             ["crop", "metric", "region", "level", "start_year", "label", "is_forecast", "value"])
-    _replace(conn, "MAGYP_SERIES", magyp,
-             ["crop", "campania", "start_year", "provincia", "planted_ha", "harvested_ha", "production_t"])
+    if conab is not None:
+        _replace(conn, "CONAB_SERIES", conab,
+                 ["crop", "metric", "region", "level", "start_year", "label", "is_forecast", "value"])
+    if magyp is not None:
+        _replace(conn, "MAGYP_SERIES", magyp,
+                 ["crop", "campania", "start_year", "provincia", "planted_ha", "harvested_ha", "production_t"])
     conn.close()
-    print(f"Done. CONAB {len(conab)} rows, MAGyP {len(magyp)} rows.")
+    print(f"Done. CONAB {0 if conab is None else len(conab)} rows, MAGyP {0 if magyp is None else len(magyp)} rows.")
 
 
 if __name__ == "__main__":
