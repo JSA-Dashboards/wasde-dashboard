@@ -239,6 +239,28 @@ def magyp_series(crop: str) -> pd.DataFrame:
     """, (crop,))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def statcan_series(crop: str) -> pd.DataFrame:
+    """Statistics Canada area / yield / production by province and year."""
+    return _query("""
+        SELECT geo, year, planted_ha, harvested_ha, production_t, yield_kgha
+        FROM JSA.WASDE.STATCAN_SERIES
+        WHERE crop = %s
+        ORDER BY year
+    """, (crop,))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def eurostat_series(crop: str) -> pd.DataFrame:
+    """Eurostat crop production (EU standard humidity) for the EU27 and member states."""
+    return _query("""
+        SELECT geo, geo_name, year, area_kha, production_kt, yield_tha
+        FROM JSA.WASDE.EUROSTAT_SERIES
+        WHERE crop = %s
+        ORDER BY year
+    """, (crop,))
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def agency_estimates(country: str) -> pd.DataFrame:
     """Crop estimates from agencies with no automated feed (BAGE, BCR, UGA, SovEcon, ABARES, ...), typed in by hand."""

@@ -254,6 +254,9 @@ AGENCIES = {
     "Ukraine":   ["UGA", "Ministry of Economy", "UkrAgroConsult", "APK-Inform", "Other"],
     "Russia":    ["SovEcon", "IKAR", "Ministry of Agriculture", "Rosstat", "Other"],
     "Australia": ["ABARES", "Other"],
+    "EU":        ["European Commission", "EC MARS (JRC)", "Strategie Grains", "COCERAL", "Argus", "Other"],
+    "France":    ["Agreste (Ministry)", "FranceAgriMer", "Strategie Grains", "Argus", "Other"],
+    "Canada":    ["AAFC", "Other"],
 }
 AGENCY_HINTS = {
     "Argentina": "BAGE = Bolsa de Cereales de Buenos Aires (weekly Panorama Agrícola + monthly estimates); "
@@ -262,6 +265,12 @@ AGENCY_HINTS = {
                  "forecasts through press releases.",
     "Russia":    "SovEcon and IKAR publish analyst forecasts; the ministry and Rosstat publish official figures.",
     "Australia": "ABARES Australian Crop Report is quarterly (Mar / Jun / Sep / Dec); next edition 1 December 2026.",
+    "EU":        "European Commission balance sheets and the JRC MARS crop-monitoring bulletin; Strategie Grains, "
+                 "COCERAL and Argus publish private forecasts.",
+    "France":    "Agreste (the agriculture ministry's statistics service) and FranceAgriMer publish the official "
+                 "French crop estimates; Strategie Grains and Argus publish private forecasts.",
+    "Canada":    "Statistics Canada is loaded automatically; AAFC (Agriculture and Agri-Food Canada) publishes a "
+                 "monthly outlook with its own production forecasts.",
 }
 MARKER_COLORS = [C_ORANGE, C_BLUE, C_GOLD, C_RED, "#9b89c4", "#2f7d7a"]
 
@@ -276,10 +285,11 @@ def _short_campaign(c: str) -> str:
     return f"{a}/{b[-2:]}" if b else a
 
 
-def estimates_block(country: str, baseline: dict, baseline_name: str):
+def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dict | None = None):
     """KPIs, comparison chart, table and entry form for one country's typed-in agency estimates.
 
     baseline: {start_year: production in 1,000 MT} from the official/USDA series.
+    extra: optional {name: {start_year: 1,000 MT}} drawn as open-circle reference markers (e.g. USDA PSD).
     """
     ag = db.agency_estimates(country)
     ag = ag[ag.crop == crop] if not ag.empty else ag
@@ -318,6 +328,11 @@ def estimates_block(country: str, baseline: dict, baseline_name: str):
             fig.add_trace(go.Scatter(
                 x=xl, y=[cvt(d[y], crop, imperial) if y in d else None for y in years], name=n, mode="markers",
                 marker=dict(symbol="diamond", size=13, color=color[n], line=dict(width=1, color="white")),
+                hovertemplate="%{x}: %{y:,.1f}<extra>" + n + "</extra>"))
+        for n, d in (extra or {}).items():
+            fig.add_trace(go.Scatter(
+                x=xl, y=[cvt(d[y], crop, imperial) if y in d else None for y in years], name=n, mode="markers",
+                marker=dict(symbol="circle-open", size=12, color=style.TEXT, line=dict(width=2)),
                 hovertemplate="%{x}: %{y:,.1f}<extra>" + n + "</extra>"))
         fig.update_layout(**style.plot_layout(
             title=dict(text=f"{country} {crop.lower()} production — {baseline_name} vs agencies",
@@ -483,8 +498,128 @@ def australia_tab():
     usda_country_tab("Australia")
 
 
-tab_br, tab_ar, tab_ua, tab_ru, tab_au = st.tabs(
-    ["Brazil · CONAB", "Argentina · BAGE / BCR", "Ukraine", "Russia", "Australia"])
+# ── Official national series with KPIs (Canada, EU, France) ───────────────────
+def national_kpis(prod_kt: dict, area_kha: dict, yield_kgha: dict, title: str):
+    """Production / area / yield KPIs for the latest year in prod_kt, vs last year and the prior 5-yr average."""
+    if not prod_kt:
+        return
+    last = max(prod_kt)
+    style.sec(title.format(year=f"{last}/{str(last + 1)[-2:]}"))
+    k = st.columns(3)
+
+    def card(col, name, series, conv, fmt, unit):
+        with col:
+            if last not in series or pd.isna(series[last]):
+                st.metric(name, "N/A")
+                return
+            cur = conv(series[last])
+            prev = conv(series[last - 1]) if (last - 1) in series and pd.notna(series[last - 1]) else None
+            st.metric(name, f"{fmt(cur)} {unit}", f"{cur - prev:+,.2f} vs LY" if prev is not None else None)
+            avg = [conv(series[y]) for y in range(last - 5, last) if y in series and pd.notna(series[y])]
+            if avg:
+                st.caption(f"5-yr avg {fmt(sum(avg) / len(avg))} {unit}")
+
+    card(k[0], "Production", prod_kt, lambda v: cvt(v, crop, imperial), lambda v: f"{v:,.1f}", ul)
+    card(k[1], "Area", area_kha, lambda v: v / 1000, lambda v: f"{v:,.2f}", "M ha")
+    card(k[2], "Yield", yield_kgha, lambda v: yld(v, crop, imperial), lambda v: f"{v:,.2f}", yu)
+
+
+def _usda_production(country: str) -> dict:
+    ser = psd.country_series(crop, country)
+    if ser.empty:
+        return {}
+    pv = ser[ser.metric == "production_kt"].set_index("start_year")["value"]
+    return pv.to_dict()
+
+
+@st.fragment
+def canada_tab():
+    sc = db.statcan_series(crop)
+    if sc.empty:
+        st.info("No Statistics Canada data loaded yet. Run `python etl/fetch_south_america.py --only statcan`.")
+        return
+    nat = sc[sc.geo == "Canada"].sort_values("year")
+    prod = {int(r.year): r.production_t / 1000 for r in nat.itertuples() if pd.notna(r.production_t)}
+    area = {int(r.year): r.harvested_ha / 1000 for r in nat.itertuples() if pd.notna(r.harvested_ha)}
+    yl = {int(r.year): r.yield_kgha for r in nat.itertuples() if pd.notna(r.yield_kgha)}
+    national_kpis(prod, area, yl, "Canada — Statistics Canada {year}")
+    estimates_block("Canada", prod, "Statistics Canada", {"USDA PSD": _usda_production("Canada")})
+
+    last = max(prod)
+    agg = {"Canada", "East", "West", "Prairie provinces", "Maritime provinces"}
+    cur = sc[(sc.year == last) & ~sc.geo.isin(agg)].set_index("geo")
+    prv = sc[(sc.year == last - 1) & ~sc.geo.isin(agg)].set_index("geo")
+    cur = cur[cur.production_t > 0].sort_values("production_t", ascending=False)
+    if not cur.empty:
+        tot = prod[last] * 1000
+        style.sec(f"Provinces — {last}/{str(last + 1)[-2:]}")
+        tbl = pd.DataFrame({
+            "Province": cur.index,
+            f"Production ({ul})": [f"{cvt(v / 1000, crop, imperial):,.1f}" for v in cur.production_t],
+            "Share": [f"{v / tot * 100:.1f}%" for v in cur.production_t],
+            "Harvested (M ha)": [f"{v / 1e6:,.2f}" if pd.notna(v) else "—" for v in cur.harvested_ha],
+            f"Yield ({yu})": [f"{yld(v, crop, imperial):,.2f}" if pd.notna(v) else "—" for v in cur.yield_kgha],
+            "Δ LY": [fmt_d(cvt((v - prv.production_t.get(g)) / 1000, crop, imperial))
+                     if g in prv.index and pd.notna(prv.production_t.get(g)) else "—"
+                     for g, v in zip(cur.index, cur.production_t)],
+        })
+        st.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
+                     width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 420))
+    st.caption("Source: Statistics Canada, Table 32-10-0359-01, under the Statistics Canada Open Licence. "
+               "The current year is a model-based estimate until the final survey release.")
+
+
+def eurostat_view(country: str, geo: str, members: bool):
+    es = db.eurostat_series(crop)
+    if es.empty:
+        st.info("No Eurostat data loaded yet. Run `python etl/fetch_south_america.py --only eurostat`.")
+        return
+    nat = es[es.geo == geo].sort_values("year")
+    prod = {int(r.year): r.production_kt for r in nat.itertuples() if pd.notna(r.production_kt)}
+    area = {int(r.year): r.area_kha for r in nat.itertuples() if pd.notna(r.area_kha)}
+    yl = {int(r.year): r.yield_tha * 1000 for r in nat.itertuples() if pd.notna(r.yield_tha)}
+    national_kpis(prod, area, yl, f"{country} — Eurostat {{year}}")
+    extra = {"USDA PSD": _usda_production("EU")} if country == "EU" else None
+    estimates_block(country, prod, "Eurostat", extra)
+
+    if members and prod:
+        last = max(prod)
+        cur = es[(es.year == last) & (es.geo != "EU27_2020")].set_index("geo_name")
+        prv = es[(es.year == last - 1) & (es.geo != "EU27_2020")].set_index("geo_name")
+        cur = cur[cur.production_kt > 0].sort_values("production_kt", ascending=False).head(15)
+        if not cur.empty:
+            style.sec(f"Member states — {last}/{str(last + 1)[-2:]}")
+            tot = prod[last]
+            tbl = pd.DataFrame({
+                "Country": cur.index,
+                f"Production ({ul})": [f"{cvt(v, crop, imperial):,.1f}" for v in cur.production_kt],
+                "Share": [f"{v / tot * 100:.1f}%" for v in cur.production_kt],
+                "Area (M ha)": [f"{v / 1000:,.2f}" if pd.notna(v) else "—" for v in cur.area_kha],
+                f"Yield ({yu})": [f"{yld(v * 1000, crop, imperial):,.2f}" if pd.notna(v) else "—"
+                                  for v in cur.yield_tha],
+                "Δ LY": [fmt_d(cvt(v - prv.production_kt.get(g), crop, imperial))
+                         if g in prv.index and pd.notna(prv.production_kt.get(g)) else "—"
+                         for g, v in zip(cur.index, cur.production_kt)],
+            })
+            st.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
+                         width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 460))
+    st.caption("Source: Eurostat, apro_cpsh1 (crop production in EU standard humidity), CC BY 4.0. "
+               "The newest year can be an early estimate, and member-state coverage is partial until Eurostat completes it.")
+
+
+@st.fragment
+def eu_tab():
+    eurostat_view("EU", "EU27_2020", members=True)
+
+
+@st.fragment
+def france_tab():
+    eurostat_view("France", "FR", members=False)
+
+
+tab_br, tab_ar, tab_ua, tab_ru, tab_au, tab_eu, tab_fr, tab_ca = st.tabs(
+    ["Brazil · CONAB", "Argentina · BAGE / BCR", "Ukraine", "Russia", "Australia",
+     "EU · Eurostat", "France", "Canada · StatCan"])
 with tab_br:
     brazil_tab()
 with tab_ar:
@@ -495,5 +630,11 @@ with tab_ru:
     russia_tab()
 with tab_au:
     australia_tab()
+with tab_eu:
+    eu_tab()
+with tab_fr:
+    france_tab()
+with tab_ca:
+    canada_tab()
 
 style.disclaimer()

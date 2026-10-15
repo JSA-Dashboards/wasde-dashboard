@@ -20,7 +20,9 @@ import argparse
 import io
 import re
 import sys
+import time
 import unicodedata
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -44,6 +46,16 @@ CONAB_REGIONS = {"NORTE", "NORDESTE", "CENTRO-OESTE", "SUDESTE", "SUL", "NORTE/N
 MAGYP_PACKAGE = "https://datos.gob.ar/api/3/action/package_show?id=estimaciones-agricolas"
 MAGYP_CROPS = {"soja total": "Soybeans", "maiz": "Corn", "trigo total": "Wheat"}
 
+STATCAN_WDS = "https://www150.statcan.gc.ca/t1/wds/rest/getFullTableDownloadCSV/32100359/en"
+STATCAN_CROPS = {"Soybeans": "Soybeans", "Corn": "Corn for grain", "Wheat": "Wheat, all",
+                 "Barley": "Barley", "Canola": "Canola (rapeseed)"}
+STATCAN_METRICS = {"Seeded area (hectares)": "planted_ha", "Harvested area (hectares)": "harvested_ha",
+                   "Production (metric tonnes)": "production_t", "Average yield (kilograms per hectare)": "yield_kgha"}
+
+EUROSTAT = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/apro_cpsh1"
+EUROSTAT_CROPS = {"Wheat": "C1100", "Corn": "C1500", "Barley": "C1300", "Canola": "I1110", "Soybeans": "I1130"}
+EUROSTAT_METRICS = {"AR_THS_HA": "area_kha", "HPRD_HUMD_EU_THS_T": "production_kt", "YLD_HUMD_EU_T_HA": "yield_tha"}
+
 DDL = [
     """CREATE TABLE IF NOT EXISTS JSA.WASDE.CONAB_SERIES (
         crop VARCHAR, metric VARCHAR, region VARCHAR, level VARCHAR,
@@ -64,6 +76,16 @@ DDL = [
     "GRANT SELECT, INSERT, DELETE ON TABLE JSA.WASDE.AGENCY_ESTIMATES TO ROLE WASDE_ROLE",
     "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.CONAB_SERIES TO ROLE WASDE_ETL_ROLE",
     "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.MAGYP_SERIES TO ROLE WASDE_ETL_ROLE",
+    """CREATE TABLE IF NOT EXISTS JSA.WASDE.STATCAN_SERIES (
+        crop VARCHAR, geo VARCHAR, year INTEGER, planted_ha FLOAT, harvested_ha FLOAT,
+        production_t FLOAT, yield_kgha FLOAT, loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
+    """CREATE TABLE IF NOT EXISTS JSA.WASDE.EUROSTAT_SERIES (
+        crop VARCHAR, geo VARCHAR, geo_name VARCHAR, year INTEGER, area_kha FLOAT,
+        production_kt FLOAT, yield_tha FLOAT, loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
+    "GRANT SELECT ON TABLE JSA.WASDE.STATCAN_SERIES TO ROLE WASDE_ROLE",
+    "GRANT SELECT ON TABLE JSA.WASDE.EUROSTAT_SERIES TO ROLE WASDE_ROLE",
+    "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.STATCAN_SERIES TO ROLE WASDE_ETL_ROLE",
+    "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.EUROSTAT_SERIES TO ROLE WASDE_ETL_ROLE",
 ]
 
 
@@ -125,6 +147,76 @@ def fetch_magyp() -> pd.DataFrame:
     return out
 
 
+def _get(url: str, timeout: int = 180, tries: int = 3):
+    """GET with retries (StatCan's file host occasionally stalls once)."""
+    last = None
+    for attempt in range(tries):
+        if attempt:
+            time.sleep(5 * attempt)
+        try:
+            r = requests.get(url, headers=UA, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            last = e
+    raise last
+
+
+def fetch_statcan() -> pd.DataFrame:
+    """Statistics Canada table 32-10-0359-01 (Open Licence): area, yield, production by province."""
+    url = _get(STATCAN_WDS, 60).json()["object"]
+    z = zipfile.ZipFile(io.BytesIO(_get(url, 120).content))
+    df = pd.read_csv(z.open("32100359.csv"), dtype=str, encoding="utf-8-sig",
+                     usecols=["REF_DATE", "GEO", "Harvest disposition", "Type of crop", "VALUE"])
+    inv = {v: k for k, v in STATCAN_CROPS.items()}
+    df = df[df["Type of crop"].isin(inv) & df["Harvest disposition"].isin(STATCAN_METRICS)].copy()
+    df["crop"] = df["Type of crop"].map(inv)
+    df["metric"] = df["Harvest disposition"].map(STATCAN_METRICS)
+    df["year"] = pd.to_numeric(df["REF_DATE"].str[:4], errors="coerce")
+    df["VALUE"] = pd.to_numeric(df["VALUE"], errors="coerce")
+    df = df[df.year >= 1960].dropna(subset=["year"])
+    out = (df.pivot_table(index=["crop", "GEO", "year"], columns="metric", values="VALUE", aggfunc="first")
+             .reset_index().rename(columns={"GEO": "geo"}))
+    out["year"] = out["year"].astype(int)
+    for c in STATCAN_METRICS.values():
+        if c not in out:
+            out[c] = None
+    print(f"  StatCan: {len(out)} rows, years {out.year.min()}-{out.year.max()}")
+    return out
+
+
+def fetch_eurostat() -> pd.DataFrame:
+    """Eurostat apro_cpsh1 (CC BY 4.0): crop production in EU standard humidity, EU27 + member states."""
+    rows = []
+    for crop, code in EUROSTAT_CROPS.items():
+        q = "&".join(f"strucpro={m}" for m in EUROSTAT_METRICS)
+        d = _get(f"{EUROSTAT}?format=JSON&lang=EN&crops={code}&{q}&sinceTimePeriod=2000", 120).json()
+        dims, size = d["id"], d["size"]
+        pos = {}
+        for dim in dims:
+            idx = d["dimension"][dim]["category"]["index"]
+            pos[dim] = ([k for k, _ in sorted(idx.items(), key=lambda kv: kv[1])]
+                        if isinstance(idx, dict) else list(idx))
+        names = d["dimension"]["geo"]["category"].get("label", {})
+        for flat, v in d["value"].items():
+            rem, coord = int(flat), {}
+            for dim, n in zip(reversed(dims), reversed(size)):
+                rem, r = divmod(rem, n)
+                coord[dim] = pos[dim][r]
+            geo = coord["geo"]
+            if geo == "EU27_2020" or len(geo) == 2:
+                rows.append((crop, geo, names.get(geo, geo), int(coord["time"]),
+                             EUROSTAT_METRICS[coord["strucpro"]], v))
+    df = pd.DataFrame(rows, columns=["crop", "geo", "geo_name", "year", "metric", "value"])
+    out = (df.pivot_table(index=["crop", "geo", "geo_name", "year"], columns="metric", values="value",
+                          aggfunc="first").reset_index())
+    for c in EUROSTAT_METRICS.values():
+        if c not in out:
+            out[c] = None
+    print(f"  Eurostat: {len(out)} rows, years {out.year.min()}-{out.year.max()}")
+    return out
+
+
 def _replace(conn, table: str, df: pd.DataFrame, cols: list[str]):
     cur = conn.cursor()
     try:
@@ -147,8 +239,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--setup", action="store_true", help="create tables + grants, then exit")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--only", choices=["conab", "magyp"],
-                    help="load just one source (the Droplet can't reach datos.magyp.gob.ar, so it runs --only conab)")
+    ap.add_argument("--only", action="append", choices=["conab", "magyp", "statcan", "eurostat"],
+                    help="load just these sources (repeatable); the Droplet can't reach datos.magyp.gob.ar")
     args = ap.parse_args()
 
     if args.setup:
@@ -162,25 +254,30 @@ def main():
         print("Setup done.")
         return
 
-    conab = magyp = None
-    if args.only in (None, "conab"):
-        print("Fetching CONAB…")
-        conab = fetch_conab()
-    if args.only in (None, "magyp"):
-        print("Fetching MAGyP…")
-        magyp = fetch_magyp()
+    want = set(args.only or ["conab", "magyp", "statcan", "eurostat"])
+    jobs = {
+        "conab":    ("CONAB", fetch_conab, "CONAB_SERIES",
+                     ["crop", "metric", "region", "level", "start_year", "label", "is_forecast", "value"]),
+        "magyp":    ("MAGyP", fetch_magyp, "MAGYP_SERIES",
+                     ["crop", "campania", "start_year", "provincia", "planted_ha", "harvested_ha", "production_t"]),
+        "statcan":  ("StatCan", fetch_statcan, "STATCAN_SERIES",
+                     ["crop", "geo", "year", "planted_ha", "harvested_ha", "production_t", "yield_kgha"]),
+        "eurostat": ("Eurostat", fetch_eurostat, "EUROSTAT_SERIES",
+                     ["crop", "geo", "geo_name", "year", "area_kha", "production_kt", "yield_tha"]),
+    }
+    data = {}
+    for key, (label, fn, _, _) in jobs.items():
+        if key in want:
+            print(f"Fetching {label}…")
+            data[key] = fn()
     if args.dry_run:
         print("Dry run: nothing written.")
         return
     conn = _sf_connect()
-    if conab is not None:
-        _replace(conn, "CONAB_SERIES", conab,
-                 ["crop", "metric", "region", "level", "start_year", "label", "is_forecast", "value"])
-    if magyp is not None:
-        _replace(conn, "MAGYP_SERIES", magyp,
-                 ["crop", "campania", "start_year", "provincia", "planted_ha", "harvested_ha", "production_t"])
+    for key, df in data.items():
+        _replace(conn, jobs[key][2], df, jobs[key][3])
     conn.close()
-    print(f"Done. CONAB {0 if conab is None else len(conab)} rows, MAGyP {0 if magyp is None else len(magyp)} rows.")
+    print("Done. " + ", ".join(f"{jobs[k][0]} {len(v)} rows" for k, v in data.items()))
 
 
 if __name__ == "__main__":
