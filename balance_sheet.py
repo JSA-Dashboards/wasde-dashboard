@@ -135,9 +135,23 @@ def make_view(n: pd.DataFrame, view: str, prev: pd.DataFrame | None = None) -> p
     return out
 
 
-def visible_keys(n: pd.DataFrame, years: list[int]) -> list[str]:
+OILSEEDS = {"Soybeans", "Canola (Rapeseed)", "Sunflowerseed", "Peanuts"}
+OPTIONAL = {"area_planted", "crush", "feed", "feed_waste", "food_use", "fsi", "industrial", "loss"}
+
+
+def visible_keys(n: pd.DataFrame, years: list[int], commodity: str | None = None) -> list[str]:
+    """Rows with data in the range; optional rows that are all zero are hidden, and Crush shows only on oilseeds."""
     sub = n.loc[n.index.isin(years)]
-    return [k for k, *_ in ROWS if k in sub.columns and sub[k].notna().any()]
+    keys = []
+    for k, *_ in ROWS:
+        if k not in sub.columns or not sub[k].notna().any():
+            continue
+        if k in OPTIONAL and not (sub[k].fillna(0).abs() > 1e-9).any():
+            continue
+        if k == "crush" and commodity is not None and commodity not in OILSEEDS:
+            continue
+        keys.append(k)
+    return keys
 
 
 def to_display(v: pd.DataFrame, commodity: str, system: str, keys: list[str]) -> pd.DataFrame:

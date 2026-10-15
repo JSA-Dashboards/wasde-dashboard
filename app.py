@@ -172,7 +172,7 @@ if view == "lr":
         prev = bs.previous_vintage(basic, db.latest_revisions(commodity, snap), units)
 
 years = [y for y in range(b0, e0 + 1) if y in N.index]
-keys = bs.visible_keys(N, years)
+keys = bs.visible_keys(N, years, commodity)
 V = bs.make_view(N, view, prev)
 D = bs.to_display(V, commodity, system, keys)
 
