@@ -249,6 +249,9 @@ def brazil_tab():
 
 
 # ── Agency estimates (typed in) vs an official/USDA baseline ──────────────────
+EU27 = ["BE", "BG", "CZ", "DK", "DE", "EE", "IE", "EL", "ES", "FR", "HR", "IT", "CY", "LV", "LT", "LU",
+        "HU", "MT", "NL", "AT", "PL", "PT", "RO", "SI", "SK", "FI", "SE"]
+
 AGENCIES = {
     "Argentina": ["BAGE", "BCR", "Other"],
     "Ukraine":   ["UGA", "Ministry of Economy", "UkrAgroConsult", "APK-Inform", "Other"],
@@ -587,8 +590,8 @@ def eurostat_view(country: str, geo: str, members: bool):
 
     if members and prod:
         last = max(prod)
-        cur = es[(es.year == last) & ~es.geo.isin(["EU27_2020", "EU"])].set_index("geo_name")
-        prv = es[(es.year == last - 1) & ~es.geo.isin(["EU27_2020", "EU"])].set_index("geo_name")
+        cur = es[(es.year == last) & es.geo.isin(EU27)].set_index("geo_name")
+        prv = es[(es.year == last - 1) & es.geo.isin(EU27)].set_index("geo_name")
         cur = cur[cur.production_kt > 0].sort_values("production_kt", ascending=False).head(15)
         if not cur.empty:
             style.sec(f"Member states — {last}/{str(last + 1)[-2:]}")
