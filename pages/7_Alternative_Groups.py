@@ -291,7 +291,7 @@ EU27 = ["BE", "BG", "CZ", "DK", "DE", "EE", "IE", "EL", "ES", "FR", "HR", "IT", 
         "HU", "MT", "NL", "AT", "PL", "PT", "RO", "SI", "SK", "FI", "SE"]
 
 AGENCIES = {
-    "Argentina": ["BAGE", "BCR", "Soybean & Corn Advisor", "Other"],
+    "Argentina": ["BAGE", "BCR", "Soybean & Corn Advisor", "Safras & Mercado", "Other"],
     "Ukraine":   ["UGA", "Ministry of Economy", "UkrAgroConsult", "APK-Inform", "Other"],
     "Russia":    ["SovEcon", "IKAR", "Ministry of Agriculture", "Rosstat", "Other"],
     "Australia": ["ABARES", "Other"],
@@ -299,7 +299,7 @@ AGENCIES = {
     "France":    ["Agreste (Ministry)", "FranceAgriMer", "Strategie Grains", "Argus", "Other"],
     "Canada":    ["AAFC", "Other"],
     "Mexico":    ["SIAP (Agriculture ministry)", "Other"],
-    "Brazil":    ["Soybean & Corn Advisor", "Other"],
+    "Brazil":    ["Soybean & Corn Advisor", "Safras & Mercado", "Other"],
     "United States": ["Soybean & Corn Advisor", "Other"],
 }
 for _agencies in AGENCIES.values():           # USDA FAS attaché (GAIN) and Expana apply to every origin
@@ -318,7 +318,8 @@ AGENCY_HINTS = {
     "Mexico":    "SIAP (Servicio de Información Agroalimentaria y Pesquera) is the official source, but its data "
                  "host is unreachable from outside Mexico, so its Cierre agrícola / Avance de siembras figures are typed in.",
     "Brazil":    "CONAB is loaded automatically above; the Soybean & Corn Advisor's weekly report is loaded by "
-                 "etl/load_advisor_report.py; add any other Brazilian estimate here.",
+                 "etl/load_advisor_report.py; Safras & Mercado (Porto Alegre) publishes its own Brazil crop "
+                 "estimates; add any other Brazilian estimate here.",
     "United States": "USDA (WASDE / Crop Production) is the baseline; the Soybean & Corn Advisor's weekly report "
                  "carries its own U.S. corn and soybean estimates.",
     "Canada":    "Statistics Canada is loaded automatically; AAFC (Agriculture and Agri-Food Canada) publishes a "
@@ -335,6 +336,23 @@ def _short_campaign(c: str) -> str:
     """'2024/2025' -> '2024/25'"""
     a, _, b = str(c).partition("/")
     return f"{a}/{b[-2:]}" if b else a
+
+
+PSD_COUNTRY = {"Brazil": "BR", "Argentina": "AR", "United States": "US", "Ukraine": "UP", "Russia": "RS",
+               "Australia": "AS", "EU": "E4", "Canada": "CA", "Mexico": "MX"}
+
+
+def _usda_prod_hist(country: str) -> dict:
+    """USDA PSD production by marketing year (1,000 MT) for the selected crop, from the Snowflake history."""
+    code = pm.COMMODITIES.get({"Canola": "Canola (Rapeseed)"}.get(crop, crop))
+    cc = PSD_COUNTRY.get(country)
+    if not code or not cc or code not in db.psd_loaded_commodities():
+        return {}
+    h = db.psd_history(code, cc)
+    if h.empty:
+        return {}
+    s = h[h.attribute_id == 28].drop_duplicates("market_year").set_index("market_year").value
+    return {int(y): float(v) for y, v in s.items()}
 
 
 def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dict | None = None):
@@ -355,12 +373,26 @@ def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dic
                 f"{AGENCY_HINTS[country]} Add one below.")
     else:
         latest = ag.groupby("agency", sort=False).head(1)            # newest report per agency
-        cols = st.columns(min(len(latest), 4))
-        for col, r in zip(cols, latest.itertuples()):
+        usda_h = _usda_prod_hist(country)
+        ref_my = _campaign_year(latest.campaign.iloc[0])             # the newest report's marketing year
+        cards = list(latest.itertuples())[:4]
+        cols = st.columns(len(cards) + (1 if ref_my in usda_h else 0))
+        if ref_my in usda_h:                                         # USDA first, so every card reads against it
+            with cols[0]:
+                st.metric(f"USDA (PSD) · {ref_my}/{str(ref_my + 1)[-2:]}",
+                          f"{cvt(usda_h[ref_my], crop, imperial):,.1f} {ul}",
+                          help="Latest WASDE estimate for the newest agency report's marketing year.")
+                st.caption("latest WASDE")
+            cols = cols[1:]
+        for col, r in zip(cols, cards):
             with col:
-                st.metric(f"{r.agency} · {r.campaign}",
+                base_kt = usda_h.get(_campaign_year(r.campaign))
+                gap = (r.production_mmt * 1000 - base_kt) if pd.notna(r.production_mmt) and base_kt else None
+                st.metric(f"{SHORT.get(r.agency, r.agency)} · {r.campaign}",
                           f"{cvt(r.production_mmt * 1000, crop, imperial):,.1f} {ul}"
                           if pd.notna(r.production_mmt) else "N/A",
+                          delta=None if gap is None else f"{cvt(gap, crop, imperial):+,.1f} vs USDA",
+                          delta_color="off",
                           help=f"Report dated {r.report_date}"
                                + (f". Planted area {r.planted_mha:,.2f} M ha." if pd.notna(r.planted_mha) else ""))
                 st.caption(f"{r.report_date}")
@@ -378,8 +410,8 @@ def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dic
                              hovertemplate="%{x}: %{y:,.1f}<extra>" + baseline_name + "</extra>"))
         for n, d in pts.items():
             fig.add_trace(go.Scatter(
-                x=xl, y=[cvt(d[y], crop, imperial) if y in d else None for y in years], name=n, mode="markers",
-                marker=dict(symbol="diamond", size=13, color=color[n], line=dict(width=1, color="white")),
+                x=xl, y=[cvt(d[y], crop, imperial) if y in d else None for y in years], name=SHORT.get(n, n),
+                mode="markers", marker=dict(symbol="diamond", size=13, color=color[n], line=dict(width=1, color="white")),
                 hovertemplate="%{x}: %{y:,.1f}<extra>" + n + "</extra>"))
         for n, d in (extra or {}).items():
             fig.add_trace(go.Scatter(
@@ -947,15 +979,15 @@ def compare_block(country: str, ccode: str):
             gap = "" if ref in (None, 0) or rows[i]["kind"] == "usda" else f"<br>{(v / ref - 1) * 100:+.1f}% vs USDA"
             return fmt(v) + gap.replace("-0.0%", "0.0%")
         fig = go.Figure(go.Bar(x=names, y=values, marker_color=cols, text=[label(v, i) for i, v in enumerate(values)],
-                               textposition="inside", insidetextanchor="end",
-                               textfont=dict(color="white", size=11),
+                               textposition="outside", cliponaxis=False, textangle=0,
+                               textfont=dict(color=style.TEXT, size=11),
                                hovertemplate="%{x}: %{y:,.2f}<extra></extra>"))
         if ref is not None:
-            fig.add_hline(y=ref, line_dash="dash", line_color=C_GREEN, line_width=1.5)
+            fig.add_hline(y=ref, line_dash="dot", line_color="#9aa8a0", line_width=1, layer="below")
         top = max([v for v in values if v is not None] + [ref or 0] or [1])
         fig.update_layout(**style.plot_layout(yaxis_title=ytitle, height=290, showlegend=False,
                                               margin=dict(l=10, r=10, t=30, b=40)))
-        fig.update_yaxes(range=[0, top * 1.18] if top else None)
+        fig.update_yaxes(range=[0, top * 1.32] if top else None)
         st.plotly_chart(fig, width="stretch", key=f"cmp_{tag}_{ccode}_{crop}_{yr}")
 
     c1, c2, c3 = st.columns(3)
@@ -984,7 +1016,7 @@ def compare_block(country: str, ccode: str):
         yv = [None if not r["yld"] else yld(r["yld"] * 1000, crop, imperial) for r in rows]
         panel(f"Yield ({yu})", yv, lambda v: "" if v is None else f"{v:,.2f}", yu,
               None if usda_row is None or not usda_row["yld"] else yld(usda_row["yld"] * 1000, crop, imperial), tag="yld")
-    st.caption("Each source keeps its own colour. The dashed green line marks USDA. Area is shown on the basis "
+    st.caption("Each source keeps its own colour. The dotted grey line marks USDA. Area is shown on the basis "
                "each source publishes: planted (light) and harvested (dark); yield is production over harvested "
                "area unless the source states its own. Marketing years follow each source's convention.")
 
