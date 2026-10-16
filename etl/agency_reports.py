@@ -41,7 +41,10 @@ def read_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         try:                                                  # PyMuPDF: pure pip, same reading order as pdftotext -raw
-            import fitz
+            try:
+                import pymupdf as fitz
+            except ImportError:                               # older PyMuPDF still calls itself fitz
+                import fitz
             with fitz.open(path) as doc:
                 text = " ".join(page.get_text("text") for page in doc)
         except ImportError:

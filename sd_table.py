@@ -24,7 +24,7 @@ def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: d
             f"<span class='gu'>· {html.escape(unit)}</span></td></tr>"]
     for label, kind, vals in rows:
         style = "ratio" if kind == "pct" else "total" if label in BOLD else ""
-        dec = 1 if kind == "pct" else (1 if max([abs(v) for v in vals.values() if v == v] or [0]) < 100 else 0)
+        dec = 1 if kind == "pct" else (1 if max([abs(v) for v in vals.values() if v is not None and v == v] or [0]) < 100 else 0)
         cells = []
         for s in seasons:
             x = vals.get(s)
