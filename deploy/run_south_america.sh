@@ -31,6 +31,8 @@ rc=0
     "$VENV/bin/pip" install -q -r deploy/requirements-droplet.txt || echo "pip install failed — continuing"
     "$VENV/bin/python" etl/fetch_south_america.py --only conab --only conabsd --only statcan --only eurostat
     rc=$?    # capture immediately — must precede any other command
+    # BCR (Rosario) monthly crop estimates, read from its PDF; a failure here must not fail the run
+    "$VENV/bin/python" etl/agency_reports.py bcr --write || echo "BCR report read failed — continuing"
     echo "=== South America ETL finished $(date -Is) rc=$rc ==="
 } >>"$LOG" 2>&1
 
