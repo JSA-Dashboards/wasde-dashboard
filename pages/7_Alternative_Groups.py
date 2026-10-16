@@ -8,6 +8,7 @@ each tab (password-gated) and stored in JSA.WASDE.AGENCY_ESTIMATES.
 """
 
 import hmac
+import re
 import os
 from urllib.parse import quote
 from datetime import date
@@ -395,9 +396,11 @@ def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dic
         show = ag.copy()
         show["report_date"] = show["report_date"].astype(str)
         show = show.rename(columns={"report_date": "Report date", "agency": "Agency", "campaign": "Campaign",
-                                    "planted_mha": "Planted (M ha)", "production_mmt": "Production (MMT)",
+                                    "planted_mha": "Planted (M ha)", "harvested_mha": "Harvested (M ha)",
+                                    "production_mmt": "Production (MMT)",
                                     "yield_tha": "Yield (t/ha)", "note": "Note"})
-        st.dataframe(show[["id", "Report date", "Agency", "Campaign", "Planted (M ha)", "Production (MMT)",
+        st.dataframe(show[["id", "Report date", "Agency", "Campaign", "Planted (M ha)", "Harvested (M ha)",
+                           "Production (MMT)",
                            "Yield (t/ha)", "Note"]],
                      width="stretch", hide_index=True, height=min(60 + len(show) * 36, 300))
 
@@ -437,16 +440,18 @@ def entry_form(country: str, ag: pd.DataFrame):
             with f3:
                 prod_mmt = st.number_input(f"{crop} production (MMT)", min_value=0.0, step=0.1, format="%.2f")
                 planted = st.number_input("Planted area (M ha)", min_value=0.0, step=0.1, format="%.2f")
+                harvested = st.number_input("Harvested area (M ha)", min_value=0.0, step=0.1, format="%.2f")
             note = st.text_input("Note (e.g. report name, link)")
             if st.form_submit_button("Save estimate"):
                 name = (other.strip() if agency == "Other" else agency)
                 if not name:
                     st.error("Enter the agency name.")
-                elif prod_mmt <= 0 and planted <= 0:
+                elif prod_mmt <= 0 and planted <= 0 and harvested <= 0:
                     st.error("Enter at least a production or an area figure.")
                 else:
-                    y_tha = prod_mmt / planted if planted > 0 and prod_mmt > 0 else None
-                    db.agency_add(country, name, crop, camp, rdate, planted or None, prod_mmt or None, y_tha, note)
+                    y_tha = prod_mmt / harvested if harvested > 0 and prod_mmt > 0 else None
+                    db.agency_add(country, name, crop, camp, rdate, planted or None, prod_mmt or None, y_tha, note,
+                                  harvested_mha=harvested or None)
                     st.success(f"Saved {name} {crop} {camp}.")
                     st.rerun(scope="fragment")
         if not ag.empty:
@@ -789,38 +794,57 @@ def psd_balance(country: str, ccode: str):
 
 
 def _auto_source(country: str):
-    """The automatic official/statistical series for a country: (name, {start_year: (prod_kt, area_kha)})."""
+    """The automatic official/statistical series for a country: (name, {year: row}).
+
+    row = dict(prod kt, planted kha, harvested kha, yld t/ha); a basis a source doesn't publish is None."""
     try:
         if country == "Brazil" and crop in _CORE:
             df = db.conab_series(crop)
             t = df[df.level == "total"]
-            p = t[t.metric == "production_kt"].set_index("start_year").value
-            a = t[t.metric == "area_kha"].set_index("start_year").value
-            return "CONAB", {int(y): (v, a.get(y)) for y, v in p.items()}
+            g = {m: t[t.metric == m].set_index("start_year").value for m in ("production_kt", "area_kha", "yield_kgha")}
+            return "CONAB", {int(y): dict(prod=v, planted=g["area_kha"].get(y), harvested=None,
+                                          yld=(g["yield_kgha"].get(y) or 0) / 1000 or None)
+                             for y, v in g["production_kt"].items()}
         if country == "Argentina" and crop in _CORE:
             mg = db.magyp_series(crop)
-            g = mg.groupby("start_year")[["planted_ha", "production_t"]].sum(min_count=1)
-            return "MAGyP (ministry)", {int(y): (r.production_t / 1000, r.planted_ha / 1000)
-                                        for y, r in g.iterrows() if pd.notna(r.production_t)}
+            g = mg.groupby("start_year")[["planted_ha", "harvested_ha", "production_t"]].sum(min_count=1)
+            return "MAGyP (ministry)", {
+                int(y): dict(prod=r.production_t / 1000,
+                             planted=r.planted_ha / 1000 if pd.notna(r.planted_ha) else None,
+                             harvested=r.harvested_ha / 1000 if pd.notna(r.harvested_ha) else None,
+                             yld=r.production_t / r.harvested_ha if pd.notna(r.harvested_ha) and r.harvested_ha else None)
+                for y, r in g.iterrows() if pd.notna(r.production_t)}
         if country == "Canada":
             sc = db.statcan_series(crop)
             n = sc[sc.geo == "Canada"]
-            return "Statistics Canada", {int(r.year): (r.production_t / 1000,
-                                                       r.planted_ha / 1000 if pd.notna(r.planted_ha) else None)
-                                         for r in n.itertuples() if pd.notna(r.production_t)}
+            return "Statistics Canada", {
+                int(r.year): dict(prod=r.production_t / 1000,
+                                  planted=r.planted_ha / 1000 if pd.notna(r.planted_ha) else None,
+                                  harvested=r.harvested_ha / 1000 if pd.notna(r.harvested_ha) else None,
+                                  yld=r.yield_kgha / 1000 if pd.notna(r.yield_kgha) else None)
+                for r in n.itertuples() if pd.notna(r.production_t)}
         if country == "EU":
             es = db.eurostat_series(crop)
             n = es[es.geo == "EU27_2020"]
-            return "Eurostat", {int(r.year): (r.production_kt, r.area_kha)
-                                for r in n.itertuples() if pd.notna(r.production_kt)}
+            return "Eurostat", {
+                int(r.year): dict(prod=r.production_kt, planted=None,
+                                  harvested=r.area_kha if pd.notna(r.area_kha) else None,
+                                  yld=r.yield_tha if pd.notna(r.yield_tha) else None)
+                for r in n.itertuples() if pd.notna(r.production_kt)}
     except Exception:
         pass
     return None, {}
 
 
+SHORT = {"USDA (PSD)": "USDA", "Soybean & Corn Advisor": "S&C Advisor", "Statistics Canada": "StatCan",
+         "MAGyP (ministry)": "MAGyP"}
+AGENCY_COLORS = [C_GOLD, C_ORANGE, "#9b89c4", "#2f7d7a", C_RED]
+PLANTED_C, HARVESTED_C = "#a9c4de", "#2f5d8a"
+
+
 @st.fragment
 def compare_block(country: str, ccode: str):
-    """USDA vs every other source for one marketing year: production, area, yield and the gap to USDA."""
+    """USDA vs every other source for one marketing year: production, planted and harvested area, yield."""
     name = PSD_CROPS.get(crop, crop)
     code = pm.COMMODITIES.get(name)
     usda = {}
@@ -831,8 +855,10 @@ def compare_block(country: str, ccode: str):
                 return h[h.attribute_id == aid].drop_duplicates("market_year").set_index("market_year").value
             prod, planted, harv = ser(28), ser(1), ser(4)
             for y, v in prod.items():
-                area = planted.get(y) if pd.notna(planted.get(y)) else harv.get(y)
-                usda[int(y)] = (float(v), float(area) if area is not None and pd.notna(area) else None)
+                pl, hv = planted.get(y), harv.get(y)
+                usda[int(y)] = dict(prod=float(v), planted=float(pl) if pl is not None and pd.notna(pl) else None,
+                                    harvested=float(hv) if hv is not None and pd.notna(hv) else None,
+                                    yld=float(v) / float(hv) if hv is not None and pd.notna(hv) and hv else None)
     ag = db.agency_estimates(country)
     ag = ag[ag.crop == crop].copy() if not ag.empty else ag
     auto_name, auto = _auto_source(country)
@@ -847,55 +873,114 @@ def compare_block(country: str, ccode: str):
     yr = st.selectbox("Marketing year", options, index=0, key=f"cmp_{ccode}_{crop}",
                       format_func=lambda y: f"{y}/{str(y + 1)[-2:]}")
 
-    rows = []                                    # (source, kind, prod_kt, area_kha, report note, stated yield t/ha)
+    rows = []                                    # dicts: src, kind, prod, planted, harvested, yld, asof (kt / kha / t/ha)
     if yr in usda:
-        rows.append(("USDA (PSD)", "usda", usda[yr][0], usda[yr][1], "latest WASDE", None))
+        rows.append(dict(src="USDA (PSD)", kind="usda", asof="latest WASDE", **usda[yr]))
     if auto_name and yr in auto:
-        rows.append((auto_name, "auto", auto[yr][0], auto[yr][1], "official series", None))
+        rows.append(dict(src=auto_name, kind="auto", asof="official series", **auto[yr]))
     if not ag.empty:
         cur = ag[ag.campaign.map(_campaign_year) == yr].groupby("agency", sort=False).head(1)
         for r in cur.itertuples():
-            if pd.notna(r.production_mmt):
-                rows.append((r.agency, "agency", r.production_mmt * 1000,
-                             r.planted_mha * 1000 if pd.notna(r.planted_mha) else None, f"{r.report_date}",
-                             r.yield_tha if pd.notna(r.yield_tha) else None))
+            if pd.isna(r.production_mmt):
+                continue
+            hv = r.harvested_mha * 1000 if pd.notna(r.harvested_mha) else None
+            if hv is None and isinstance(r.note, str):               # older rows kept harvested acres in the note
+                m = re.search(r"Harvested ([\d.]+) M ac", r.note)
+                hv = float(m.group(1)) * 0.404685642 * 1000 if m else None
+            pl = r.planted_mha * 1000 if pd.notna(r.planted_mha) else None
+            yl = r.yield_tha if pd.notna(r.yield_tha) else (r.production_mmt * 1000 / hv if hv else None)
+            rows.append(dict(src=r.agency, kind="agency", prod=r.production_mmt * 1000, planted=pl, harvested=hv,
+                             yld=yl, asof=f"{r.report_date}"))
     if not rows:
         st.info(f"No estimates for {yr}/{str(yr + 1)[-2:]} yet.")
         return
-    base = usda.get(yr, (None, None))[0]
+    base = usda.get(yr, {}).get("prod")
 
-    def fmt_gap(v):
-        return "—" if v is None else f"{v:+,.1f}"
+    color, ai = {}, 0
+    for r in rows:
+        if r["kind"] == "usda":
+            color[r["src"]] = C_GREEN
+        elif r["kind"] == "auto":
+            color[r["src"]] = C_BLUE
+        else:
+            color[r["src"]] = AGENCY_COLORS[ai % len(AGENCY_COLORS)]
+            ai += 1
+
+    def mha(v):
+        return "—" if v is None or pd.isna(v) else f"{v / 1000:,.2f}"
+
+    def yfmt(t_ha):
+        return "—" if not t_ha else f"{yld(t_ha * 1000, crop, imperial):,.2f}"
 
     tbl = []
-    for src, kind, p, a, note, ystated in rows:
-        gap = None if base is None or kind == "usda" else p - base
+    for r in rows:
+        gap = None if base is None or r["kind"] == "usda" else r["prod"] - base
+        pct = "—" if gap is None else f"{gap / base * 100:+.1f}%".replace("-0.0%", "0.0%")
         tbl.append({
-            "Source": src,
-            f"Production ({ul})": f"{cvt(p, crop, imperial):,.1f}",
-            f"vs USDA ({ul})": fmt_gap(None if gap is None else cvt(gap, crop, imperial)),
-            "vs USDA %": "—" if gap is None else f"{gap / base * 100 + 0.0:+.1f}%".replace("-0.0%", "0.0%"),
-            "Area (M ha)": f"{a / 1000:,.2f}" if a else "—",
-            f"Yield ({yu})": (f"{yld(ystated * 1000, crop, imperial):,.2f}" if ystated
-                              else f"{yld(p / a * 1000, crop, imperial):,.2f}" if a else "—"),
-            "As of": note,
+            "Source": r["src"],
+            f"Production ({ul})": f"{cvt(r['prod'], crop, imperial):,.1f}",
+            f"vs USDA ({ul})": "—" if gap is None else f"{cvt(gap, crop, imperial):+,.1f}",
+            "vs USDA %": pct,
+            "Planted (M ha)": mha(r["planted"]),
+            "Harvested (M ha)": mha(r["harvested"]),
+            f"Yield ({yu})": yfmt(r["yld"]),
+            "As of": r["asof"],
         })
     st.dataframe(pd.DataFrame(tbl).style.map(color_delta, subset=["vs USDA %"]).set_properties(
         **{"font-size": "0.85rem"}), width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 360))
 
-    colors = {"usda": C_GREEN, "auto": C_BLUE, "agency": C_GOLD}
-    fig = go.Figure(go.Bar(
-        x=[r[0] for r in rows], y=[cvt(r[2], crop, imperial) for r in rows],
-        marker_color=[colors[r[1]] for r in rows],
-        text=[f"{cvt(r[2], crop, imperial):,.1f}" for r in rows], textposition="outside", cliponaxis=False,
-        hovertemplate="%{x}: %{y:,.1f}<extra></extra>"))
-    fig.update_layout(**style.plot_layout(
-        title=dict(text=f"{country} {crop.lower()} {yr}/{str(yr + 1)[-2:]} production — USDA vs other estimates",
-                   font=dict(size=13)), yaxis_title=ul, height=330, showlegend=False))
-    st.plotly_chart(fig, width="stretch")
-    st.caption("Green = USDA PSD, blue = official/statistical series, gold = typed-in or emailed agency estimates "
-               "(newest report per agency). Area is planted where the source gives it, otherwise USDA's harvested area; "
-               "marketing years follow each source's own convention.")
+    chips = "".join(f"<span style='margin-right:16px;white-space:nowrap'><span style='display:inline-block;"
+                    f"width:11px;height:11px;border-radius:2px;background:{color[r['src']]};margin-right:5px'></span>"
+                    f"{r['src']}</span>" for r in rows)
+    st.markdown(f"<div style='font-size:0.85rem;color:{style.TEXT};margin:4px 0 2px'>{chips}</div>",
+                unsafe_allow_html=True)
+    names = [SHORT.get(r["src"], r["src"]) for r in rows]
+    cols = [color[r["src"]] for r in rows]
+    usda_row = next((r for r in rows if r["kind"] == "usda"), None)
+
+    def panel(title, values, fmt, ytitle, ref=None, tag=""):
+        st.markdown(f"<div style='font-weight:600;font-size:0.9rem;color:{style.TEXT}'>{title}</div>",
+                    unsafe_allow_html=True)
+        fig = go.Figure(go.Bar(x=names, y=values, marker_color=cols, text=[fmt(v) for v in values],
+                               textposition="outside", cliponaxis=False,
+                               hovertemplate="%{x}: %{y:,.2f}<extra></extra>"))
+        if ref is not None:
+            fig.add_hline(y=ref, line_dash="dash", line_color=C_GREEN, line_width=1.5)
+        top = max([v for v in values if v is not None] + [ref or 0] or [1])
+        fig.update_layout(**style.plot_layout(yaxis_title=ytitle, height=290, showlegend=False,
+                                              margin=dict(l=10, r=10, t=30, b=40)))
+        fig.update_yaxes(range=[0, top * 1.18] if top else None)
+        st.plotly_chart(fig, width="stretch", key=f"cmp_{tag}_{ccode}_{crop}_{yr}")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        pv = [cvt(r["prod"], crop, imperial) for r in rows]
+        panel(f"Production ({ul})", pv, lambda v: f"{v:,.1f}", ul,
+              None if usda_row is None else cvt(usda_row["prod"], crop, imperial), tag="prod")
+    with c2:
+        st.markdown(f"<div style='font-weight:600;font-size:0.9rem;color:{style.TEXT}'>Area (M ha)</div>",
+                    unsafe_allow_html=True)
+        fa = go.Figure()
+        for lab, key, col in (("Planted", "planted", PLANTED_C), ("Harvested", "harvested", HARVESTED_C)):
+            vals = [None if r[key] is None or pd.isna(r[key]) else r[key] / 1000 for r in rows]
+            fa.add_trace(go.Bar(x=names, y=vals, name=lab, marker_color=col,
+                                text=[None if v is None else f"{v:,.2f}" for v in vals],
+                                textposition="outside", cliponaxis=False,
+                                hovertemplate="%{x} " + lab.lower() + ": %{y:,.2f}<extra></extra>"))
+        top = max([r[k] / 1000 for r in rows for k in ("planted", "harvested")
+                   if r[k] is not None and not pd.isna(r[k])] or [1])
+        fa.update_layout(**style.plot_layout(
+            yaxis_title="M ha", height=290, barmode="group",
+            legend=dict(orientation="h", y=1.12, x=0), margin=dict(l=10, r=10, t=30, b=40)))
+        fa.update_yaxes(range=[0, top * 1.2])
+        st.plotly_chart(fa, width="stretch", key=f"cmp_area_{ccode}_{crop}_{yr}")
+    with c3:
+        yv = [None if not r["yld"] else yld(r["yld"] * 1000, crop, imperial) for r in rows]
+        panel(f"Yield ({yu})", yv, lambda v: "" if v is None else f"{v:,.2f}", yu,
+              None if usda_row is None or not usda_row["yld"] else yld(usda_row["yld"] * 1000, crop, imperial), tag="yld")
+    st.caption("Each source keeps its own colour. The dashed green line marks USDA. Area is shown on the basis "
+               "each source publishes: planted (light) and harvested (dark); yield is production over harvested "
+               "area unless the source states its own. Marketing years follow each source's convention.")
 
 
 @st.fragment

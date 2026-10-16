@@ -61,7 +61,7 @@ def parse(lines: list[str], rdate: date) -> list[dict]:
     def row(country, crop, campaign):
         return rows.setdefault((country, crop, campaign), {
             "country": country, "agency": AGENCY, "crop": crop, "campaign": campaign,
-            "report_date": rdate, "planted_mha": None, "production_mmt": None, "yield_tha": None, "note": ""})
+            "report_date": rdate, "planted_mha": None, "harvested_mha": None, "production_mmt": None, "yield_tha": None, "note": ""})
 
     # South America: "2026/27 Brazil soybean planted acreage49.2 mha (121.5 mac), up 1%" / "... production180.0 mt, ..."
     for ln in lines:
@@ -103,6 +103,8 @@ def parse(lines: list[str], rdate: date) -> list[dict]:
         r["production_mmt"] = val * 1000 * MT_PER_BU[crop]          # billion bu -> million t
         if (word, "planted acreage") in us:
             r["planted_mha"] = us[(word, "planted acreage")][0] * HA_PER_ACRE
+        if (word, "harvested acreage") in us:
+            r["harvested_mha"] = us[(word, "harvested acreage")][0] * HA_PER_ACRE
         if (word, "yield") in us:
             r["yield_tha"] = us[(word, "yield")][0] * MT_PER_BU[crop] / HA_PER_ACRE * 1.0
         if (word, "harvested acreage") in us:
@@ -132,13 +134,14 @@ def main():
     conn = _sf_connect()
     cur = conn.cursor()
     try:
+        cur.execute("ALTER TABLE JSA.WASDE.AGENCY_ESTIMATES ADD COLUMN IF NOT EXISTS harvested_mha FLOAT")
         cur.execute("DELETE FROM JSA.WASDE.AGENCY_ESTIMATES WHERE agency = %s AND report_date = %s",
                     (AGENCY, rdate))
         cur.executemany(
             "INSERT INTO JSA.WASDE.AGENCY_ESTIMATES (country, agency, crop, campaign, report_date, planted_mha, "
-            "production_mmt, yield_tha, note) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "harvested_mha, production_mmt, yield_tha, note) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             [(r["country"], AGENCY, r["crop"], r["campaign"], r["report_date"], r["planted_mha"],
-              r["production_mmt"], r["yield_tha"], r["note"] or None) for r in rows])
+              r["harvested_mha"], r["production_mmt"], r["yield_tha"], r["note"] or None) for r in rows])
         conn.commit()
     finally:
         cur.close()

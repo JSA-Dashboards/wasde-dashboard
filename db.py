@@ -336,7 +336,7 @@ def eurostat_series(crop: str) -> pd.DataFrame:
 def agency_estimates(country: str) -> pd.DataFrame:
     """Crop estimates from agencies with no automated feed (BAGE, BCR, UGA, SovEcon, ABARES, ...), typed in by hand."""
     return _query("""
-        SELECT id, country, agency, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note
+        SELECT id, country, agency, crop, campaign, report_date, planted_mha, harvested_mha, production_mmt, yield_tha, note
         FROM JSA.WASDE.AGENCY_ESTIMATES
         WHERE country = %s
         ORDER BY report_date DESC, id DESC
@@ -349,12 +349,13 @@ def _write(sql: str, params: tuple) -> None:
 
 
 def agency_add(country: str, agency: str, crop: str, campaign: str, report_date,
-               planted_mha, production_mmt, yield_tha, note: str) -> None:
+               planted_mha, production_mmt, yield_tha, note: str, harvested_mha=None) -> None:
     _write("""
         INSERT INTO JSA.WASDE.AGENCY_ESTIMATES
-            (country, agency, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, (country, agency, crop, campaign, report_date, planted_mha, production_mmt, yield_tha, note or None))
+            (country, agency, crop, campaign, report_date, planted_mha, harvested_mha, production_mmt, yield_tha, note)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (country, agency, crop, campaign, report_date, planted_mha, harvested_mha, production_mmt, yield_tha,
+          note or None))
 
 
 def agency_delete(row_id: int) -> None:
