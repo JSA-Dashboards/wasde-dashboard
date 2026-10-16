@@ -847,17 +847,18 @@ def compare_block(country: str, ccode: str):
     yr = st.selectbox("Marketing year", options, index=0, key=f"cmp_{ccode}_{crop}",
                       format_func=lambda y: f"{y}/{str(y + 1)[-2:]}")
 
-    rows = []                                    # (source, kind, prod_kt, area_kha, report note)
+    rows = []                                    # (source, kind, prod_kt, area_kha, report note, stated yield t/ha)
     if yr in usda:
-        rows.append(("USDA (PSD)", "usda", usda[yr][0], usda[yr][1], "latest WASDE"))
+        rows.append(("USDA (PSD)", "usda", usda[yr][0], usda[yr][1], "latest WASDE", None))
     if auto_name and yr in auto:
-        rows.append((auto_name, "auto", auto[yr][0], auto[yr][1], "official series"))
+        rows.append((auto_name, "auto", auto[yr][0], auto[yr][1], "official series", None))
     if not ag.empty:
         cur = ag[ag.campaign.map(_campaign_year) == yr].groupby("agency", sort=False).head(1)
         for r in cur.itertuples():
             if pd.notna(r.production_mmt):
                 rows.append((r.agency, "agency", r.production_mmt * 1000,
-                             r.planted_mha * 1000 if pd.notna(r.planted_mha) else None, f"{r.report_date}"))
+                             r.planted_mha * 1000 if pd.notna(r.planted_mha) else None, f"{r.report_date}",
+                             r.yield_tha if pd.notna(r.yield_tha) else None))
     if not rows:
         st.info(f"No estimates for {yr}/{str(yr + 1)[-2:]} yet.")
         return
@@ -867,15 +868,16 @@ def compare_block(country: str, ccode: str):
         return "—" if v is None else f"{v:+,.1f}"
 
     tbl = []
-    for src, kind, p, a, note in rows:
+    for src, kind, p, a, note, ystated in rows:
         gap = None if base is None or kind == "usda" else p - base
         tbl.append({
             "Source": src,
             f"Production ({ul})": f"{cvt(p, crop, imperial):,.1f}",
             f"vs USDA ({ul})": fmt_gap(None if gap is None else cvt(gap, crop, imperial)),
-            "vs USDA %": "—" if gap is None else f"{gap / base * 100:+.1f}%",
+            "vs USDA %": "—" if gap is None else f"{gap / base * 100 + 0.0:+.1f}%".replace("-0.0%", "0.0%"),
             "Area (M ha)": f"{a / 1000:,.2f}" if a else "—",
-            f"Yield ({yu})": f"{yld(p / a * 1000, crop, imperial):,.2f}" if a else "—",
+            f"Yield ({yu})": (f"{yld(ystated * 1000, crop, imperial):,.2f}" if ystated
+                              else f"{yld(p / a * 1000, crop, imperial):,.2f}" if a else "—"),
             "As of": note,
         })
     st.dataframe(pd.DataFrame(tbl).style.map(color_delta, subset=["vs USDA %"]).set_properties(
