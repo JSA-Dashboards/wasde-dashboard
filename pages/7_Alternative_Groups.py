@@ -941,8 +941,14 @@ def compare_block(country: str, ccode: str):
     def panel(title, values, fmt, ytitle, ref=None, tag=""):
         st.markdown(f"<div style='font-weight:600;font-size:0.9rem;color:{style.TEXT}'>{title}</div>",
                     unsafe_allow_html=True)
-        fig = go.Figure(go.Bar(x=names, y=values, marker_color=cols, text=[fmt(v) for v in values],
-                               textposition="outside", cliponaxis=False,
+        def label(v, i):
+            if v is None:
+                return ""
+            gap = "" if ref in (None, 0) or rows[i]["kind"] == "usda" else f"<br>{(v / ref - 1) * 100:+.1f}% vs USDA"
+            return fmt(v) + gap.replace("-0.0%", "0.0%")
+        fig = go.Figure(go.Bar(x=names, y=values, marker_color=cols, text=[label(v, i) for i, v in enumerate(values)],
+                               textposition="inside", insidetextanchor="end",
+                               textfont=dict(color="white", size=11),
                                hovertemplate="%{x}: %{y:,.2f}<extra></extra>"))
         if ref is not None:
             fig.add_hline(y=ref, line_dash="dash", line_color=C_GREEN, line_width=1.5)
