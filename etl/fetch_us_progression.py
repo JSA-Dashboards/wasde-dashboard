@@ -247,11 +247,12 @@ def main():
     args = ap.parse_args()
 
     conn = _sf_connect()
-    cur = conn.cursor()
-    for stmt in DDL:
-        cur.execute(stmt)
-    conn.commit()
-    cur.close()
+    if args.setup or args.seed_workbook:       # table creation needs the owner role; the Droplet's ETL role can't (and needn't)
+        cur = conn.cursor()
+        for stmt in DDL:
+            cur.execute(stmt)
+        conn.commit()
+        cur.close()
     if args.setup:
         print("Setup done.")
         return
