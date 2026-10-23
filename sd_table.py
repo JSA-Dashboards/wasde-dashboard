@@ -17,20 +17,32 @@ def _fmt(v, dec: int, signed: bool, pct: bool = False) -> str:
     return s + ("%" if pct else "")
 
 
-def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: dict, signed: bool = False) -> str:
-    """rows = [(label, kind, {season: value}), ...]; kind in {'qty', 'pct'}; seasons newest first."""
+def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: dict, signed: bool = False,
+           trend: bool = False, bold: set | None = None, heading: str | None = None) -> str:
+    """rows = [(label, kind, {season: value}[, decimals]), ...]; kind in {'qty', 'pct'}.
+
+    seasons are shown in the order given. trend=True colours each value by its change from the previous column
+    (the `cur` column is left plain). bold = row labels to emphasise (default: Total Supply / Total Use / Ending Stocks)."""
+    bold = BOLD if bold is None else bold
     head = "".join(f"<th class='{'cur' if s == cur else ''}'>{html.escape(s)}</th>" for s in seasons)
-    body = [f"<tr class='grp'><td colspan='{len(seasons) + 1}'>Balance sheet "
+    body = [f"<tr class='grp'><td colspan='{len(seasons) + 1}'>{html.escape(heading or 'Balance sheet')} "
             f"<span class='gu'>· {html.escape(unit)}</span></td></tr>"]
-    for label, kind, vals in rows:
-        style = "ratio" if kind == "pct" else "total" if label in BOLD else ""
-        dec = 1 if kind == "pct" else (1 if max([abs(v) for v in vals.values() if v is not None and v == v] or [0]) < 100 else 0)
+    for row in rows:
+        label, kind, vals = row[:3]
+        style = "ratio" if kind == "pct" else "total" if label in bold else ""
+        dec = row[3] if len(row) > 3 and row[3] is not None else (
+            1 if kind == "pct" else (1 if max([abs(v) for v in vals.values() if v is not None and v == v] or [0]) < 100 else 0))
         cells = []
+        prev = None
         for s in seasons:
             x = vals.get(s)
             cls = "cur" if s == cur else ""
             if signed and isinstance(x, (int, float)) and x == x and round(x, dec) != 0:
                 cls += " pos" if x > 0 else " neg"
+            if trend and s != cur and isinstance(x, (int, float)) and x == x:
+                if prev is not None and round(x, dec) != round(prev, dec):
+                    cls += " pos" if x > prev else " neg"
+                prev = x
             cells.append(f"<td class='{cls.strip()}'>{_fmt(x, dec, signed, kind == 'pct')}</td>")
         body.append(f"<tr class='{style}'><th class='lab'>{html.escape(label)}</th>{''.join(cells)}</tr>")
     css = (

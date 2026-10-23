@@ -31,6 +31,7 @@ _fresh_modules()
 
 import db
 import style
+import us_progression
 from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_RED, SERIES_COLORS
 from units import convert, fmt, unit_label
 
@@ -88,6 +89,12 @@ if not db.snowflake_available():
         "```\npython etl/fetch_wasde.py --backfill\n```"
     )
     st.stop()
+
+# ── U.S. S&D by WASDE release (the Excel 'WASDE Progression' template) ───────
+if region == "US" and commodity in ("Corn", "Wheat", "Soybeans"):
+    us_progression.show(commodity, mkt_year, {
+        "border": style.BORDER, "text": style.TEXT, "muted": style.TEXT_MUTED, "green": C_GREEN,
+        "dark": "#3f4f44", "good": "#1f7a3d", "bad": C_RED})
 
 # ── Load revision data ────────────────────────────────────────────────────────
 with st.spinner("Loading revision series…"):

@@ -2,6 +2,7 @@
 # run_psd_history.sh — monthly refresh of the full USDA PSD history behind the Balance Sheet page.
 # Re-pulls the last 3 marketing years (the ones USDA still revises) for every commodity into
 # JSA.WASDE.PSD_HISTORY. Idempotent, so the catch-up run is harmless. Needs FAS_API_KEY in .env.
+# Also refreshes JSA.WASDE.US_PROGRESSION (etl/fetch_us_progression.py).
 # The first full 1960+ load is run by hand (~1.5 h, API limit 1,000 calls/hour): etl/fetch_psd_history.py
 set -uo pipefail
 
@@ -26,6 +27,9 @@ rc=0
     set -a; . "$APP_DIR/.env"; set +a
     "$VENV/bin/python" -u etl/fetch_psd_history.py --refresh-only --workers 3
     rc=$?    # capture immediately — must precede any other command
+    # U.S. WASDE-by-WASDE progression (corn / wheat / soybeans): last 3 reports, USDA CSV with archive-XML fallback.
+    # Runs on the same 12th + 14th schedule; a failure here must not fail the PSD refresh.
+    "$VENV/bin/python" -u etl/fetch_us_progression.py || echo "US progression fetch failed — continuing"
     echo "=== PSD history refresh finished $(date -Is) rc=$rc ==="
 } >>"$LOG" 2>&1
 

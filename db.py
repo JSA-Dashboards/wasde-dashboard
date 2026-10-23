@@ -289,6 +289,16 @@ def conab_series(crop: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def us_progression(commodity: str) -> pd.DataFrame:
+    """U.S. S&D by WASDE release (etl/fetch_us_progression.py): WASDE's own units (million bu / acres, bu/ac, %)."""
+    return _query("""
+        SELECT market_year, kind, release_date, item, value, source
+        FROM JSA.WASDE.US_PROGRESSION
+        WHERE commodity = %s
+    """, (commodity,))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def conab_sd(product: str) -> pd.DataFrame:
     """CONAB supply & demand balance sheet (1,000 t): latest estimate (rev_rank 0) and the prior report (1)."""
     return _query("""
