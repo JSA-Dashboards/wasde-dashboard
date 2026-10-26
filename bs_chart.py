@@ -31,7 +31,7 @@ def show(view: pd.DataFrame, keys: list[str], years: list[int], labels: dict, co
     tag = f"{commodity}_{region}".replace(" ", "_")          # options depend on commodity/region: keep them in the key
     default = [k for k in DEFAULT if k in avail] or avail[:3]
 
-    c1, c2, c3 = st.columns([3, 1.3, 1.5])
+    c1, c2, c3 = st.columns([2.5, 2.0, 1.6])
     with c1:
         sel = st.multiselect("Line items", avail, default=default, format_func=lambda k: bs.LABEL[k],
                              key=f"bsx_items_{tag}")
@@ -68,7 +68,7 @@ def show(view: pd.DataFrame, keys: list[str], years: list[int], labels: dict, co
             fig.add_trace(go.Bar(x=xs, y=series, name=bs.LABEL[k], marker_color=color, opacity=0.9,
                                  hovertemplate="%{x}: %{y:,.1f}<extra>" + bs.LABEL[k] + "</extra>"))
         else:
-            fig.add_trace(go.Scatter(x=xs, y=series, name=bs.LABEL[k] + (" (right axis)" if on_right else ""),
+            fig.add_trace(go.Scatter(x=xs, y=series, name=bs.LABEL[k] + (" (right)" if on_right else ""),
                                      mode="lines+markers", line=dict(color=color, width=2.5), marker=dict(size=5),
                                      yaxis="y2" if on_right else "y",
                                      hovertemplate="%{x}: %{y:,.1f}<extra>" + bs.LABEL[k] + "</extra>"))
