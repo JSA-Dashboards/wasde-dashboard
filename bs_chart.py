@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import balance_sheet as bs
+import export_buttons
 import style
 from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_ORANGE, C_RED
 
@@ -75,7 +76,7 @@ def show(view: pd.DataFrame, keys: list[str], years: list[int], labels: dict, co
 
     left_title = "Index (first year = 100)" if indexed else _unit(left, labels)
     layout = dict(
-        title=dict(text=" · ".join(bs.LABEL[k] for k in sel), font=dict(size=13)),
+        title=dict(text=f"{region} {commodity} — " + " · ".join(bs.LABEL[k] for k in sel), font=dict(size=13)),
         barmode="stack" if stacked else "group",
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0),
         xaxis=dict(**style._AXIS, nticks=14, tickangle=-45),
@@ -88,6 +89,7 @@ def show(view: pd.DataFrame, keys: list[str], years: list[int], labels: dict, co
                                 gridcolor="rgba(0,0,0,0)", zeroline=False)
     fig.update_layout(**style.plot_layout(**layout))
     st.plotly_chart(fig, width="stretch", key=f"bsx_chart_{tag}")
+    export_buttons.image_buttons("plot", "", f"{tag}_chart.png")
 
     units = ", ".join(f"{bs.LABEL[k]} in {_unit(bs.KIND[k], labels)}" for k in sel)
     st.caption(f"{note}{commodity} ({region}) over the selected marketing years. "

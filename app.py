@@ -33,6 +33,7 @@ _fresh_modules()
 
 import balance_sheet as bs  # noqa: E402
 import bs_chart  # noqa: E402
+import export_buttons  # noqa: E402
 import db  # noqa: E402
 import massive  # noqa: E402
 import psd_meta as pm  # noqa: E402
@@ -48,7 +49,7 @@ st.set_page_config(
 style.inject()
 style.nav_bar()
 
-YEARS = list(range(1960, date.today().year + 2))
+YEARS = list(range(date.today().year, 1959, -1))     # newest first: the latest year is on top of the list
 SNAPSHOT_COMMODITIES = {"Corn", "Soybeans", "Wheat", "Cotton", "Rice, Milled", "Soybean Oil"}
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December"]
@@ -73,6 +74,7 @@ if not COMMODITIES:
     style.disclaimer()
     st.stop()
 
+title_slot = st.container()          # the page title lives above the controls; it is filled in after they are read
 st.markdown("<div class='ctrl-bar'>", unsafe_allow_html=True)
 c1, c2, c3, c4, c5 = st.columns([1.5, 1.5, 1, 1, 1.2])
 with c1:
@@ -103,9 +105,9 @@ latest = int(N["production"].dropna().index.max()) if "production" in N else int
 
 with c3:
     begin = st.selectbox("Begin year", YEARS, index=YEARS.index(max(2000, first_year)), key="bs_begin",
-                         format_func=mkt)
+                         format_func=mkt)                                  # newest first
 with c4:
-    end = st.selectbox("End year", YEARS, index=YEARS.index(latest), key="bs_end", format_func=mkt)
+    end = st.selectbox("End year", YEARS, index=YEARS.index(min(latest, YEARS[0])), key="bs_end", format_func=mkt)
 with c5:
     system = (st.segmented_control("Units", ["Metric", "Imperial"], default="Imperial", key="bs_units")
               or "Imperial").lower()
@@ -122,15 +124,21 @@ labels = pm.unit_labels(commodity, system)
 as_of = int(df["as_of"].max())
 as_of_txt = f"{MONTHS[as_of % 100 - 1]} {as_of // 100}" if as_of else ""
 
-# ── Title ─────────────────────────────────────────────────────────────────────
-st.markdown(
-    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.6rem;font-weight:600;"
-    f"color:{style.TEXT};margin:4px 0 2px'>{region} {commodity} — Supply &amp; Demand Balance Sheet</div>"
-    f"<div style='color:{style.TEXT_MUTED};font-size:0.85rem;margin-bottom:6px'>"
-    f"{mkt(b0)} – {mkt(e0)} &nbsp;·&nbsp; {system.title()} &nbsp;·&nbsp; USDA FAS PSD"
-    f"{' &nbsp;·&nbsp; updated ' + as_of_txt if as_of_txt else ''}</div>",
-    unsafe_allow_html=True,
-)
+# ── Title (top of the page: country · commodity, then the units of measure) ──
+_units_txt = f"{labels['qty']} · area {labels['area']} · yield {labels['yield']}"
+with title_slot:
+    st.markdown(
+        f"<div style='margin:2px 0 14px;padding:8px 0 12px;border-bottom:3px solid {C_GREEN}'>"
+        f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:2.4rem;font-weight:700;line-height:1.1;"
+        f"color:{style.TEXT}'>{region} &middot; {commodity}</div>"
+        f"<div style='font-size:1.25rem;font-weight:700;color:{style.TEXT};margin-top:4px'>"
+        f"Supply &amp; Demand Balance Sheet</div>"
+        f"<div style='font-size:1.05rem;font-weight:700;color:{C_GREEN};margin-top:2px'>Units: {_units_txt}</div>"
+        f"<div style='color:{style.TEXT_MUTED};font-size:0.85rem;margin-top:4px'>"
+        f"{mkt(b0)} &ndash; {mkt(e0)} &nbsp;·&nbsp; {system.title()} &nbsp;·&nbsp; USDA FAS PSD"
+        f"{' &nbsp;·&nbsp; updated ' + as_of_txt if as_of_txt else ''}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 # ── KPI row (end year) ────────────────────────────────────────────────────────
 cur_view = bs.to_display(bs.make_view(N, "current"), commodity, system,
@@ -179,6 +187,11 @@ D = bs.to_display(V, commodity, system, keys)
 
 st.markdown(bs.render_html(D, years, keys, commodity, system, view, latest, TABLE_COLORS),
             unsafe_allow_html=True)
+_slug = f"{region}_{commodity}".replace(" ", "_").replace(",", "")
+export_buttons.image_buttons(
+    "table", f"{region} {commodity} — Supply & Demand Balance Sheet · {labels['qty']}"
+             f"{'' if view == 'current' else ' · ' + view_label}",
+    f"{_slug}_balance_sheet.png")
 
 notes = {
     "current": "Current USDA estimates and forecasts; the shaded column is the current marketing year.",
@@ -225,11 +238,12 @@ with ch1:
                                  mode="lines+markers", line=dict(color=C_GOLD, width=2.5), marker=dict(size=5),
                                  yaxis="y2"))
     fig.update_layout(**style.plot_layout(
-        title=dict(text="Production · Total Use · Ending Stocks", font=dict(size=13)),
+        title=dict(text=f"{region} {commodity} — Production · Total Use · Ending Stocks", font=dict(size=13)),
         barmode="group", legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0), xaxis=dict(**style._AXIS, nticks=14, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), yaxis=dict(title=labels["qty"], gridcolor=style.BORDER),
         yaxis2=dict(title="Ending Stocks", overlaying="y", side="right", gridcolor="rgba(0,0,0,0)", zeroline=False),
         height=340))
     st.plotly_chart(fig, width="stretch")
+    export_buttons.image_buttons("plot", "", f"{_slug}_production_use_stocks.png")
 
 with ch2:
     if "stu" in cur_view:
@@ -241,9 +255,10 @@ with ch2:
         fig2.add_hline(y=avg, line_dash="dot", line_color=style.TEXT_MUTED,
                        annotation_text=f"range avg {avg:.1f}%", annotation_position="top right")
         fig2.update_layout(**style.plot_layout(
-            title=dict(text="Stocks-to-Use %", font=dict(size=13)),
+            title=dict(text=f"{region} {commodity} — Stocks-to-Use %", font=dict(size=13)),
             xaxis=dict(**style._AXIS, nticks=14, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), yaxis=dict(title="%", gridcolor=style.BORDER), height=340, showlegend=False))
         st.plotly_chart(fig2, width="stretch")
+        export_buttons.image_buttons("plot", "", f"{_slug}_stocks_to_use.png")
 
 use_keys = [k for k in ("feed", "feed_waste", "crush", "food_use", "fsi", "industrial", "mill_use", "loss", "exports")
             if k in cur_view and cur_view.loc[chart_years, k].notna().any()]
@@ -254,8 +269,9 @@ if len(use_keys) >= 2:
         fig3.add_trace(go.Bar(x=[mkt(y) for y in chart_years], y=[cur_view.at[y, k] for y in chart_years],
                               name=bs.LABEL[k], marker_color=palette[i % len(palette)]))
     fig3.update_layout(**style.plot_layout(
-        title=dict(text="Use components (stacked)", font=dict(size=13)), barmode="stack", legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0), xaxis=dict(**style._AXIS, nticks=20, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), 
+        title=dict(text=f"{region} {commodity} — Use components (stacked)", font=dict(size=13)), barmode="stack", legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0), xaxis=dict(**style._AXIS, nticks=20, tickangle=-45), margin=dict(l=10, r=10, t=85, b=45), 
         yaxis=dict(title=labels["qty"], gridcolor=style.BORDER), height=340))
     st.plotly_chart(fig3, width="stretch")
+    export_buttons.image_buttons("plot", "", f"{_slug}_use_components.png")
 
 style.disclaimer()
