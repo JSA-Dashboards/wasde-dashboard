@@ -100,6 +100,7 @@ if region == "US" and commodity in ("Corn", "Wheat", "Soybeans"):
     us_progression.show(commodity, mkt_year, {
         "border": style.BORDER, "text": style.TEXT, "muted": style.TEXT_MUTED, "green": C_GREEN,
         "dark": "#3f4f44", "good": "#1f7a3d", "bad": C_RED})
+    us_progression.show_seasonal(commodity)
 
 # ── Load revision data ────────────────────────────────────────────────────────
 with st.spinner("Loading revision series…"):
