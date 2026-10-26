@@ -228,12 +228,10 @@ with t2:
 
 @st.fragment
 def jsa_entry():
-    """Type in JSA's own estimate for the end year (password-gated; blank rows stay empty)."""
-    pw = _secret("EDIT_PASSWORD")
-    if not pw:
-        return
+    """Type in JSA's own estimate for the end year (blank rows stay empty; password-gated only if EDIT_PASSWORD is set)."""
+    pw = _secret("EDIT_PASSWORD")                 # no password set = open entry; set one in secrets to lock it
     with st.expander(f"JSA estimates — {region} {commodity} {mkt(e0)}"):
-        if not st.session_state.get("agency_ok"):
+        if pw and not st.session_state.get("agency_ok"):
             entered = st.text_input("Edit password", type="password", key="jsa_pw")
             if entered and hmac.compare_digest(entered, pw):
                 st.session_state["agency_ok"] = True
