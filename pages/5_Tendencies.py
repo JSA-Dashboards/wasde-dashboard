@@ -31,6 +31,7 @@ _fresh_modules()
 
 import db
 import style
+import export_buttons
 from style import C_GREEN, C_RED, C_GOLD, SERIES_COLORS
 from units import unit_label
 
@@ -149,7 +150,7 @@ if not rev_ser.empty:
     }]).set_index("Attribute")
 
     delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
-    st.dataframe(
+    export_buttons.dataframe(
         summary.style
                .map(_color_delta, subset=delta_cols)
                .set_properties(**{"font-size": "0.86rem"}),
@@ -204,7 +205,7 @@ fig_avg.update_layout(**style.plot_layout(
     yaxis_title=f"Avg revision ({ul})",
     height=340,
 ))
-st.plotly_chart(fig_avg, use_container_width=True)
+export_buttons.plotly_chart(fig_avg, use_container_width=True)
 
 # ── Summary table ─────────────────────────────────────────────────────────────
 style.sec("Revision Statistics by Month")
@@ -218,7 +219,7 @@ def _color_avg(val):
     if val < 0: return f"color:{C_RED};font-weight:600"
     return ""
 
-st.dataframe(
+export_buttons.dataframe(
     disp.style
         .map(_color_avg, subset=["Avg Revision"])
         .format({
@@ -263,6 +264,6 @@ with st.expander("Multi-attribute tendency heatmap"):
             height=360,
             margin=dict(l=160, r=8, t=36, b=8),
         ))
-        st.plotly_chart(fig_heat, use_container_width=True)
+        export_buttons.plotly_chart(fig_heat, use_container_width=True)
 
 style.disclaimer()

@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 import db
+import export_buttons
 import sd_table
 import style
 
@@ -115,9 +116,13 @@ def show(commodity: str, my: int, colors: dict):
 
     heading = f"{my}/{str(my + 1)[-2:]} marketing year"
     unit_txt = "WASDE units: million bushels" if not metric else "1,000 MT"
+    u_line = f"Units: {'1,000 MT · area M ha · yield t/ha' if metric else 'million bushels · area million acres · yield bu/ac'}"
     st.markdown(sd_table.render(rows, labels, "Current", unit_txt, colors, trend=True,
-                                bold={"Total Supply", "Total Demand", "Ending Stocks"}, heading=heading),
+                                bold={"Total Supply", "Total Demand", "Ending Stocks"}, heading=heading,
+                                title=(f"United States {commodity} — Supply & Demand by WASDE Release",
+                                       f"{u_line} · {my}/{str(my + 1)[-2:]} marketing year")),
                 unsafe_allow_html=True)
+    export_buttons.image_buttons("table", "", f"US_{commodity}_WASDE_progression_{my}_{str(my + 1)[-2:]}.png")
 
     have = sorted({_label((x.year, x.month)) for x in d[d.kind == "release"].release_date})
     blank = [lb for lb in labels[:-1] if lb not in have]

@@ -3,6 +3,8 @@
 import base64
 from pathlib import Path
 
+import re
+
 import streamlit as st
 
 # ── Palette (matches CFTC COT dashboard) ─────────────────────────────────────
@@ -213,6 +215,10 @@ def inject():
 
 
 def sec(label: str):
+    try:                                              # remembered so a picture of the next table/chart can be titled
+        st.session_state["_last_sec"] = re.sub(r"<[^>]+>", "", str(label)).strip()
+    except Exception:
+        pass
     st.markdown(f"<div class='sec-header'>{label}</div>", unsafe_allow_html=True)
 
 

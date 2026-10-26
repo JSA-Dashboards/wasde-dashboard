@@ -44,6 +44,7 @@ import balance_sheet as bs  # noqa: E402
 import psd_meta as pm  # noqa: E402
 import sd_table  # noqa: E402
 import style  # noqa: E402
+import export_buttons  # noqa: E402
 from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_ORANGE, C_RED  # noqa: E402
 from units import convert, unit_label  # noqa: E402
 
@@ -206,7 +207,7 @@ def brazil_tab():
         fig.update_layout(**style.plot_layout(
             title=dict(text=f"Brazil {what} production — CONAB", font=dict(size=13)),
             yaxis_title=ul, height=320, showlegend=False))
-        st.plotly_chart(fig, width="stretch")
+        export_buttons.plotly_chart(fig, width="stretch")
     with c2:
         fig = go.Figure(go.Scatter(
             x=[labels[y] for y in years], y=[yconv(yl[y]) for y in years if y in yl.index],
@@ -216,7 +217,7 @@ def brazil_tab():
         fig.update_layout(**style.plot_layout(
             title=dict(text=f"Brazil {what} yield — CONAB", font=dict(size=13)),
             yaxis_title=yu, height=320, showlegend=False))
-        st.plotly_chart(fig, width="stretch")
+        export_buttons.plotly_chart(fig, width="stretch")
 
     if crop == "Corn" and series_crop == "Corn":
         parts = {}
@@ -238,7 +239,7 @@ def brazil_tab():
                 barmode="stack", yaxis_title=ul, height=340,
                 legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0),
                 margin=dict(l=10, r=10, t=75, b=45)))
-            st.plotly_chart(fig, width="stretch")
+            export_buttons.plotly_chart(fig, width="stretch")
 
     # States for the latest year
     st_df = df[(df.level == "state") & (df.start_year.isin([last, last - 1]))]
@@ -265,7 +266,7 @@ def brazil_tab():
             fig.update_layout(**style.plot_layout(
                 xaxis_title=ul, height=max(320, len(top) * 32), showlegend=False,
                 margin=dict(l=170, r=8, t=12, b=40)))
-            st.plotly_chart(fig, width="stretch")
+            export_buttons.plotly_chart(fig, width="stretch")
         with c4:
             style.sec("State detail")
             tbl = pd.DataFrame({
@@ -277,7 +278,7 @@ def brazil_tab():
                 "Δ LY": [fmt_d(pconv(p - q)) if q is not None and not pd.isna(q) else "—"
                          for p, q in zip(out["prod"], out["prev"])],
             })
-            st.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
+            export_buttons.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
                          width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 460))
     st.caption("Source: CONAB — Série Histórica das Safras (gov.br/conab), © Conab, CC BY-ND 3.0. Soybeans and "
                "corn by crop use JSA's CONAB workbooks for finished history (through 2024/25); 2025/26 onward and "
@@ -422,7 +423,7 @@ def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dic
             title=dict(text=f"{country} {crop.lower()} production — {baseline_name} vs agencies",
                        font=dict(size=13)),
             yaxis_title=ul, height=340))
-        st.plotly_chart(fig, width="stretch")
+        export_buttons.plotly_chart(fig, width="stretch")
 
     if not ag.empty:
         show = ag.copy()
@@ -431,7 +432,7 @@ def estimates_block(country: str, baseline: dict, baseline_name: str, extra: dic
                                     "planted_mha": "Planted (M ha)", "harvested_mha": "Harvested (M ha)",
                                     "production_mmt": "Production (MMT)",
                                     "yield_tha": "Yield (t/ha)", "note": "Note"})
-        st.dataframe(show[["id", "Report date", "Agency", "Campaign", "Planted (M ha)", "Harvested (M ha)",
+        export_buttons.dataframe(show[["id", "Report date", "Agency", "Campaign", "Planted (M ha)", "Harvested (M ha)",
                            "Production (MMT)",
                            "Yield (t/ha)", "Note"]],
                      width="stretch", hide_index=True, height=min(60 + len(show) * 36, 300))
@@ -538,7 +539,7 @@ def argentina_tab():
                      if p in prv.index and pd.notna(prv.production_t.get(p)) else "—"
                      for p, v in zip(cur.index, cur.production_t)],
         })
-        st.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
+        export_buttons.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
                      width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 420))
         st.caption("Official history: Argentina's agriculture ministry (MAGyP), CC BY 4.0. The latest campaign "
                    "in that file lags the current season.")
@@ -659,7 +660,7 @@ def canada_tab():
                      if g in prv.index and pd.notna(prv.production_t.get(g)) else "—"
                      for g, v in zip(cur.index, cur.production_t)],
         })
-        st.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
+        export_buttons.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
                      width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 420))
     st.caption("Source: Statistics Canada, Table 32-10-0359-01, under the Statistics Canada Open Licence. "
                "The current year is a model-based estimate until the final survey release.")
@@ -700,7 +701,7 @@ def eurostat_view(country: str, geo: str, members: bool):
                          if g in prv.index and pd.notna(prv.production_kt.get(g)) else "—"
                          for g, v in zip(cur.index, cur.production_kt)],
             })
-            st.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
+            export_buttons.dataframe(tbl.style.map(color_delta, subset=["Δ LY"]).set_properties(**{"font-size": "0.85rem"}),
                          width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 460))
     st.caption("Source: Eurostat, apro_cpsh1 (crop production in EU standard humidity), CC BY 4.0. "
                "The newest year can be an early estimate, and member-state coverage is partial until Eurostat completes it.")
@@ -958,7 +959,7 @@ def compare_block(country: str, ccode: str):
             f"Yield ({yu})": yfmt(r["yld"]),
             "As of": r["asof"],
         })
-    st.dataframe(pd.DataFrame(tbl).style.map(color_delta, subset=["vs USDA %"]).set_properties(
+    export_buttons.dataframe(pd.DataFrame(tbl).style.map(color_delta, subset=["vs USDA %"]).set_properties(
         **{"font-size": "0.85rem"}), width="stretch", hide_index=True, height=min(60 + len(tbl) * 36, 360))
 
     chips = "".join(f"<span style='margin-right:16px;white-space:nowrap'><span style='display:inline-block;"
@@ -988,7 +989,7 @@ def compare_block(country: str, ccode: str):
         fig.update_layout(**style.plot_layout(yaxis_title=ytitle, height=290, showlegend=False,
                                               margin=dict(l=10, r=10, t=30, b=40)))
         fig.update_yaxes(range=[0, top * 1.32] if top else None)
-        st.plotly_chart(fig, width="stretch", key=f"cmp_{tag}_{ccode}_{crop}_{yr}")
+        export_buttons.plotly_chart(fig, width="stretch", key=f"cmp_{tag}_{ccode}_{crop}_{yr}")
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -1011,7 +1012,7 @@ def compare_block(country: str, ccode: str):
             yaxis_title="M ha", height=290, barmode="group",
             legend=dict(orientation="h", y=1.12, x=0), margin=dict(l=10, r=10, t=30, b=40)))
         fa.update_yaxes(range=[0, top * 1.2])
-        st.plotly_chart(fa, width="stretch", key=f"cmp_area_{ccode}_{crop}_{yr}")
+        export_buttons.plotly_chart(fa, width="stretch", key=f"cmp_area_{ccode}_{crop}_{yr}")
     with c3:
         yv = [None if not r["yld"] else yld(r["yld"] * 1000, crop, imperial) for r in rows]
         panel(f"Yield ({yu})", yv, lambda v: "" if v is None else f"{v:,.2f}", yu,

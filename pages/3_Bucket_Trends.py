@@ -30,6 +30,7 @@ _fresh_modules()
 
 import db
 import style
+import export_buttons
 from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_RED, C_ORANGE, SERIES_COLORS
 from units import convert, fmt, unit_label
 
@@ -182,7 +183,7 @@ if delta_rows:
     style.sec(f"Current Estimates vs Prior WASDE, Prior Year & 5-Year Avg — {sel_year}/{str(sel_year+1)[-2:]}")
     delta_df   = pd.DataFrame(delta_rows).set_index("Attribute")
     delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
-    st.dataframe(
+    export_buttons.dataframe(
         delta_df.style
                 .map(_color_delta, subset=delta_cols)
                 .set_properties(**{"font-size": "0.86rem"}),
@@ -253,7 +254,7 @@ fig_abs.update_layout(**style.plot_layout(
     yaxis_title=ul,
     height=320,
 ))
-st.plotly_chart(fig_abs, use_container_width=True)
+export_buttons.plotly_chart(fig_abs, use_container_width=True)
 
 # ── Share chart ───────────────────────────────────────────────────────────────
 style.sec("Share of Total Use (%)")
@@ -280,7 +281,7 @@ fig_share.update_layout(**style.plot_layout(
     yaxis_title="%",
     height=300,
 ))
-st.plotly_chart(fig_share, use_container_width=True)
+export_buttons.plotly_chart(fig_share, use_container_width=True)
 
 # ── Selected year vs 5-yr avg bar ─────────────────────────────────────────────
 style.sec(f"{sel_year}/{str(sel_year+1)[-2:]} vs 5-Year Average")
@@ -305,7 +306,7 @@ with c1:
         title=dict(text="Volume Comparison", font=dict(size=13)),
         barmode="group", yaxis_title=ul, height=280,
     ))
-    st.plotly_chart(fig_cmp, use_container_width=True)
+    export_buttons.plotly_chart(fig_cmp, use_container_width=True)
 
 with c2:
     # Ending stocks trend
@@ -330,6 +331,6 @@ with c2:
             title=dict(text="Stocks-to-Use % History", font=dict(size=13)),
             yaxis_title="%", height=280,
         ))
-        st.plotly_chart(fig_stu, use_container_width=True)
+        export_buttons.plotly_chart(fig_stu, use_container_width=True)
 
 style.disclaimer()

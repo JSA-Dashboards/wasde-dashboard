@@ -31,6 +31,7 @@ _fresh_modules()
 
 import db
 import style
+import export_buttons
 import us_progression
 from style import C_BLUE, C_GOLD, C_GREEN, C_LIME, C_RED, SERIES_COLORS
 from units import convert, fmt, unit_label
@@ -72,15 +73,19 @@ st.markdown("</div>", unsafe_allow_html=True)
 country = "0000US" if region == "US" else "0000World"
 ul = unit_label(commodity, imperial)
 
+_ctry = "United States" if region == "US" else "World"
+_ctx = f"{_ctry} {commodity} {mkt_year}/{str(mkt_year+1)[-2:]}"
+_units_line = f"Units: {ul}" + ("  ·  the U.S. supply &amp; use table below has its own units switch"
+                              if region == "US" and commodity in ("Corn", "Wheat", "Soybeans") else "")
 st.markdown(
-    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:1.35rem;"
-    f"font-weight:600;color:{style.TEXT};margin-bottom:2px'>"
-    f"{commodity} — WASDE Progression &nbsp;"
-    f"<span style='font-size:0.95rem;color:{style.TEXT_MUTED};font-weight:400'>"
-    f"{mkt_year}/{str(mkt_year+1)[-2:]} &nbsp;·&nbsp; {region}</span></div>",
+    f"<div style='margin:2px 0 14px;padding:8px 0 12px;border-bottom:3px solid {C_GREEN}'>"
+    f"<div style='font-family:\"EB Garamond\",Georgia,serif;font-size:2.4rem;font-weight:700;line-height:1.1;"
+    f"color:{style.TEXT}'>{_ctry} &middot; {commodity}</div>"
+    f"<div style='font-size:1.25rem;font-weight:700;color:{style.TEXT};margin-top:4px'>"
+    f"WASDE Progression &mdash; {mkt_year}/{str(mkt_year+1)[-2:]} marketing year</div>"
+    f"<div style='font-size:1.05rem;font-weight:700;color:{C_GREEN};margin-top:2px'>{_units_line}</div></div>",
     unsafe_allow_html=True,
 )
-st.markdown(f"<hr style='margin:6px 0 14px;border-color:{style.BORDER}'>", unsafe_allow_html=True)
 
 if not db.snowflake_available():
     st.info(
@@ -196,10 +201,11 @@ if delta_rows:
     import pandas as pd
     delta_df = pd.DataFrame(delta_rows).set_index("Attribute")
     delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
-    st.dataframe(
+    export_buttons.dataframe(
         delta_df.style
                 .map(_color_delta, subset=delta_cols)
                 .set_properties(**{"font-size": "0.86rem"}),
+        title=f"{_ctx} — Current estimates vs prior WASDE, prior year and 5-year average ({ul})",
         use_container_width=True,
         height=min(52 + len(delta_rows) * 36, 400),
     )
@@ -234,7 +240,7 @@ fig.update_layout(**style.plot_layout(
     yaxis_title=ul,
     height=380,
 ))
-st.plotly_chart(fig, use_container_width=True)
+export_buttons.plotly_chart(fig, use_container_width=True)
 
 # ── Month-over-month revision table ──────────────────────────────────────────
 style.sec("Month-over-Month Change (revision vs prior release)")
@@ -248,8 +254,9 @@ with c1:
                      .reindex(list(MONTH_LABELS.values()))
                      .dropna(how="all"))
     if not pivot_val.empty:
-        st.dataframe(
+        export_buttons.dataframe(
             pivot_val.style.format("{:,.1f}", na_rep="—"),
+            title=f"{_ctx} — Estimate by WASDE release month ({ul})",
             use_container_width=True,
             height=360,
         )
@@ -268,8 +275,9 @@ with c2:
         return f"color:{C_GREEN}" if val > 0 else f"color:{C_RED}" if val < 0 else ""
 
     if not pivot_rev.empty:
-        st.dataframe(
+        export_buttons.dataframe(
             pivot_rev.style.map(_color_rev).format("{:+,.1f}", na_rep="—"),
+            title=f"{_ctx} — Month-over-month revision ({ul})",
             use_container_width=True,
             height=360,
         )
@@ -305,6 +313,6 @@ with st.expander("Compare with prior marketing year"):
             title=dict(text=f"Current vs Prior Year — {commodity}", font=dict(size=13)),
             yaxis_title=ul, height=350,
         ))
-        st.plotly_chart(fig2, use_container_width=True)
+        export_buttons.plotly_chart(fig2, use_container_width=True)
 
 style.disclaimer()

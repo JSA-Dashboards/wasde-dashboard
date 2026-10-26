@@ -18,7 +18,8 @@ def _fmt(v, dec: int, signed: bool, pct: bool = False) -> str:
 
 
 def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: dict, signed: bool = False,
-           trend: bool = False, bold: set | None = None, heading: str | None = None) -> str:
+           trend: bool = False, bold: set | None = None, heading: str | None = None,
+           title: tuple[str, str] | None = None) -> str:
     """rows = [(label, kind, {season: value}[, decimals]), ...]; kind in {'qty', 'pct'}.
 
     seasons are shown in the order given. trend=True colours each value by its change from the previous column
@@ -48,6 +49,9 @@ def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: d
     css = (
         "<style>"
         ".bs-wrap{overflow-x:auto;border:1px solid %(border)s;border-radius:10px;background:#fff;margin-bottom:6px}"
+        ".bs-title{position:sticky;left:0;padding:14px 16px 10px;background:#fff;border-bottom:3px solid %(green)s}"
+        ".bs-title .t1{font:700 1.4rem/1.15 'EB Garamond',Georgia,serif;color:%(text)s}"
+        ".bs-title .t2{font:700 0.95rem 'Source Sans 3','Source Sans Pro',Arial,sans-serif;color:%(green)s;margin-top:3px}"
         "table.bs{border-collapse:separate;border-spacing:0;width:100%%;font-size:0.88rem;"
         "font-variant-numeric:tabular-nums;color:%(text)s}"
         "table.bs thead th{background:%(green)s;color:#fff;font-weight:600;padding:8px 12px;"
@@ -69,5 +73,9 @@ def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: d
         "table.bs tr:last-child td,table.bs tr:last-child th.lab{border-bottom:none}"
         "</style>"
     ) % {k: colors[k] for k in ("border", "text", "green", "dark", "muted", "good", "bad")}
-    return (f"{css}<div class='bs-wrap'><table class='bs'><thead><tr><th>Category</th>{head}</tr></thead>"
+    title_html = ""
+    if title:
+        title_html = (f"<div class='bs-title'><div class='t1'>{html.escape(title[0])}</div>"
+                      f"<div class='t2'>{html.escape(title[1])}</div></div>")
+    return (f"{css}<div class='bs-wrap'>{title_html}<table class='bs'><thead><tr><th>Category</th>{head}</tr></thead>"
             f"<tbody>{''.join(body)}</tbody></table></div>")

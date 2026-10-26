@@ -34,6 +34,7 @@ def _fresh_modules():
 _fresh_modules()
 
 import style
+import export_buttons
 from style import C_BLUE, C_GREEN, C_LIME, C_RED
 from units import convert, unit_label
 
@@ -324,7 +325,7 @@ with col_chart:
         height=max(320, top_n * 34),
         margin=dict(l=150, r=8, t=36, b=8),
     ))
-    st.plotly_chart(fig_top, use_container_width=True)
+    export_buttons.plotly_chart(fig_top, use_container_width=True)
 
 with col_table:
     style.sec("Ranking Table")
@@ -354,7 +355,7 @@ with col_table:
     tbl.columns = ["#", "Country", f"Current ({ul})", "Δ LR", "Δ LY", "Δ 5YA"]
 
     delta_cols = ["Δ LR", "Δ LY", "Δ 5YA"]
-    st.dataframe(
+    export_buttons.dataframe(
         tbl.style
            .map(_color_delta, subset=delta_cols)
            .set_properties(**{"font-size": "0.85rem"}),
@@ -394,7 +395,7 @@ with c1:
             xaxis_title=ul, height=300,
             margin=dict(l=130, r=8, t=36, b=8),
         ))
-        st.plotly_chart(fig_p, use_container_width=True)
+        export_buttons.plotly_chart(fig_p, use_container_width=True)
 
 with c2:
     exp_df = _side_viz(COMM_CODES[commodity], ATTR_IDS["Exports"], mkt_year, 8, commodity, imperial)
@@ -409,6 +410,6 @@ with c2:
             xaxis_title=ul, height=300,
             margin=dict(l=130, r=8, t=36, b=8),
         ))
-        st.plotly_chart(fig_e, use_container_width=True)
+        export_buttons.plotly_chart(fig_e, use_container_width=True)
 
 style.disclaimer()

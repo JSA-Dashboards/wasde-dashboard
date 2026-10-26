@@ -9,7 +9,9 @@ says so and Download PNG still works.
 """
 from __future__ import annotations
 
+import html as _html
 import json
+import re
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -24,13 +26,21 @@ _TEMPLATE = """
   button:disabled{opacity:.55;cursor:wait}
   #msg{font-size:12.5px;color:#6b7a70}
   #msg.err{color:#b3261e}
+  #cap{position:fixed;left:0;top:0;opacity:0;pointer-events:none;z-index:-1;background:#fff;padding:0;max-width:none}
+  #cap:empty{display:none}
+  #cap .ttl{font:700 20px Georgia,serif;color:#32373c;padding:12px 14px 10px;max-width:760px;white-space:normal}
+  #cap table{border-collapse:collapse;font:13px Arial,Helvetica,sans-serif;color:#32373c;margin:0 14px 14px}
+  #cap th,#cap td{border:1px solid #dfe5e0;padding:5px 11px;text-align:right;white-space:nowrap}
+  #cap th{background:#f1f4f2}
+  #cap thead th,#cap th.col_heading{background:#5a6b5f;color:#fff}
+  #cap th.row_heading,#cap td:first-child{text-align:left}
 </style>
+<div id="cap">__CAP__</div>
 <div class="row">
   <button id="copy" title="Copy the picture to the clipboard">⧉ Copy image</button>
   <button id="dl" title="Save the picture as a PNG file">⬇ Download PNG</button>
   <span id="msg"></span>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 const CFG = __CFG__;
 const P = window.parent;
@@ -38,6 +48,7 @@ const msg = document.getElementById('msg');
 const say = (t, err) => { msg.textContent = t; msg.className = err ? 'err' : ''; if (!err) setTimeout(() => { msg.textContent = ''; }, 2500); };
 
 function target() {
+  if (CFG.kind === 'inline') return document.getElementById('cap');
   const fe = window.frameElement;
   let node = fe.closest('[data-testid="stElementContainer"]') || fe.closest('.element-container') || fe.parentElement;
   const sel = CFG.kind === 'plot' ? '.js-plotly-plot' : '.bs-wrap';
@@ -48,6 +59,16 @@ function target() {
   return null;
 }
 
+function loadH2C() {                                          // screenshot library: fetched on first use only
+  if (window.html2canvas) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    s.onload = res; s.onerror = () => rej(new Error('The image library could not load (offline or blocked).'));
+    document.head.appendChild(s);
+  });
+}
+
 async function makeBlob() {
   const t = target();
   if (!t) throw new Error('Nothing to capture above this button.');
@@ -56,12 +77,14 @@ async function makeBlob() {
     const url = await P.Plotly.toImage(t, {format: 'png', width: t.offsetWidth, height: t.offsetHeight, scale: 2});
     return await (await fetch(url)).blob();
   }
-  if (!window.html2canvas) throw new Error('The image library could not load (offline or blocked).');
+  await loadH2C();
   const tbl = t.querySelector('table');
+  const inline = CFG.kind === 'inline';
   const canvas = await html2canvas(t, {
     scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false,
     windowWidth: Math.max(P.innerWidth, (tbl ? tbl.scrollWidth : 0) + 80),
     onclone: (doc, el) => {
+      if (inline) { el.style.position = 'static'; el.style.opacity = '1'; el.style.zIndex = 'auto'; el.style.width = 'max-content'; }
       const st = doc.createElement('style');          // sticky header / first column mis-place in a screenshot
       st.textContent = 'table.bs thead th, table.bs th.lab{position:static !important;left:auto !important;top:auto !important}' +
         ' table.bs, table.bs *{font-family:Arial,Helvetica,sans-serif !important;letter-spacing:0 !important}' +
@@ -69,7 +92,7 @@ async function makeBlob() {
         ' .bs-title{position:static !important}';
       doc.head.appendChild(st);
       el.style.overflow = 'visible';
-      if (tbl) el.style.width = tbl.scrollWidth + 'px';
+      if (tbl && !inline) el.style.width = tbl.scrollWidth + 'px';
       if (CFG.title) {
         const h = doc.createElement('div');
         h.textContent = CFG.title;
@@ -134,12 +157,52 @@ document.getElementById('copy').onclick = async (ev) => {
 """
 
 
-def image_buttons(kind: str, title: str, filename: str, height: int = 44) -> None:
-    """kind: 'plot' (the Plotly chart above) or 'table' (the .bs-wrap table above)."""
+def _slug(text: str) -> str:
+    text = re.sub(r"<[^>]+>", "", str(text))
+    return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")[:90] or "image"
+
+
+def image_buttons(kind: str, title: str, filename: str, height: int = 44, cap_html: str = "") -> None:
+    """kind: 'plot' (the Plotly chart above), 'table' (the .bs-wrap table above) or 'inline' (cap_html is
+    rendered out of sight inside the component and that is what gets saved)."""
     cfg = json.dumps({"kind": kind, "title": title, "file": filename})
-    html = _TEMPLATE.replace("__CFG__", cfg)
+    html = _TEMPLATE.replace("__CFG__", cfg).replace("__CAP__", cap_html)
     embed = getattr(components, "html", None)            # st.components.v1.html is being retired in favour of st.iframe
     if embed is not None:
         embed(html, height=height)
     else:
         st.iframe(html, height=height)
+
+
+def plotly_chart(fig, *, filename: str | None = None, **kwargs) -> None:
+    """st.plotly_chart plus Copy image / Download PNG buttons under it (named after the chart's own title)."""
+    st.plotly_chart(fig, **kwargs)
+    try:
+        title = fig.layout.title.text or ""
+    except Exception:
+        title = ""
+    name = filename or title or st.session_state.get("_last_sec", "") or "chart"
+    image_buttons("plot", "", f"{_slug(name)}.png")
+
+
+def table_buttons(data, title: str = "", filename: str | None = None, hide_index: bool = False) -> None:
+    """Copy / Download PNG for an interactive table: the picture is rebuilt from its data (values and colours as
+    shown), headed by `title`. Silent if the object isn't a table or is very large."""
+    try:
+        sty = data if (hasattr(data, "to_html") and hasattr(data, "data")) else data.style
+        if len(sty.data) > 400:
+            return
+        if hide_index:
+            sty = sty.hide(axis="index")
+        body = sty.to_html()
+    except Exception:
+        return
+    ttl = title or st.session_state.get("_last_sec", "")
+    cap = (f"<div class='ttl'>{_html.escape(ttl)}</div>" if ttl else "") + body
+    image_buttons("inline", "", f"{_slug(filename or ttl or 'table')}.png", cap_html=cap)
+
+
+def dataframe(data, *, title: str | None = None, filename: str | None = None, **kwargs) -> None:
+    """st.dataframe plus Copy image / Download PNG buttons for the table."""
+    st.dataframe(data, **kwargs)
+    table_buttons(data, title or "", filename, hide_index=bool(kwargs.get("hide_index")))
