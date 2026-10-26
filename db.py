@@ -372,6 +372,27 @@ def agency_delete(row_id: int) -> None:
     _write("DELETE FROM JSA.WASDE.AGENCY_ESTIMATES WHERE id = %s", (int(row_id),))
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def jsa_estimates(region: str, commodity: str) -> pd.DataFrame:
+    """JSA's own balance-sheet estimates typed in on the Balance Sheet page (base units; market_year, item, value)."""
+    return _query("""
+        SELECT market_year, item, value, note
+        FROM JSA.WASDE.JSA_ESTIMATES
+        WHERE region = %s AND commodity = %s
+    """, (region, commodity))
+
+
+def jsa_save(region: str, commodity: str, market_year: int, values: dict, note: str = "") -> None:
+    """Replace JSA's estimate for one marketing year with `values` ({row key: base-unit value}; empty = clear)."""
+    _execute("DELETE FROM JSA.WASDE.JSA_ESTIMATES WHERE region = %s AND commodity = %s AND market_year = %s",
+             (region, commodity, int(market_year)), fetch=False)
+    for item, v in values.items():
+        _execute("INSERT INTO JSA.WASDE.JSA_ESTIMATES (region, commodity, market_year, item, value, note) "
+                 "VALUES (%s, %s, %s, %s, %s, %s)",
+                 (region, commodity, int(market_year), item, float(v), note or None), fetch=False)
+    jsa_estimates.clear()
+
+
 def snowflake_available() -> bool:
     """True if Snowflake creds are configured."""
     return bool(_env("SNOWFLAKE_ACCOUNT") and _env("SNOWFLAKE_USER"))

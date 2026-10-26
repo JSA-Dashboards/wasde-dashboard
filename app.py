@@ -5,6 +5,8 @@ Multi-page app: this file = Page 1. Additional pages live in pages/.
 History comes from JSA.WASDE.PSD_HISTORY, loaded by etl/fetch_psd_history.py.
 """
 
+import hmac
+import os
 import pathlib
 import sys
 from datetime import date
@@ -34,6 +36,7 @@ _fresh_modules()
 import balance_sheet as bs  # noqa: E402
 import bs_chart  # noqa: E402
 import export_buttons  # noqa: E402
+import jsa_est  # noqa: E402
 import db  # noqa: E402
 import massive  # noqa: E402
 import psd_meta as pm  # noqa: E402
@@ -167,6 +170,13 @@ kpi(cols[3], "Ending Stocks", "ending_stocks")
 kpi(cols[4], "Stocks-to-Use", "stu", pct=True)
 futures_slot = cols[5]          # filled after the table so the slow futures lookup never blocks it
 
+def _secret(key: str) -> str:
+    try:
+        return str(st.secrets[key])
+    except Exception:
+        return os.environ.get(key, "")
+
+
 # ── Balance sheet ─────────────────────────────────────────────────────────────
 t1, t2 = st.columns([3, 1.4])
 with t1:
@@ -188,13 +198,18 @@ D = bs.to_display(V, commodity, system, keys)
 _tbl_title = (f"{region} {commodity} — Supply & Demand Balance Sheet",
               f"Units: {labels['qty']} · area {labels['area']} · yield {labels['yield']}"
               f" · {mkt(b0)} – {mkt(e0)}{'' if view == 'current' else ' · ' + view_label}")
-st.markdown(bs.render_html(D, years, keys, commodity, system, view, latest, TABLE_COLORS, title=_tbl_title),
-            unsafe_allow_html=True)
+_jsa_all = jsa_est.load(region, commodity)
+_jsa_col = jsa_est.jsa_column(_jsa_all.get(e0, {}), e0, keys, commodity, system)
+_extra = (jsa_est.extra_columns(D, e0, keys, _jsa_col, mkt(e0)) if view == "current" and e0 in D.index else None)
+st.markdown(bs.render_html(D, years, keys, commodity, system, view, latest, TABLE_COLORS, title=_tbl_title,
+                           extra=_extra), unsafe_allow_html=True)
 _slug = f"{region}_{commodity}".replace(" ", "_").replace(",", "")
 export_buttons.image_buttons("table", "", f"{_slug}_balance_sheet.png")
 
 notes = {
-    "current": "Current USDA estimates and forecasts; the shaded column is the current marketing year.",
+    "current": "Current USDA estimates and forecasts, oldest year on the left; the shaded column is the current "
+               "marketing year. Δ vs LY = change from the prior year, 5-Yr Avg = average of the five years before it, "
+               "JSA Est. = JSA's own numbers (— where none).",
     "lr": "Δ LR = change at the latest WASDE versus the previous one. Available for World and United States "
           "in corn, soybeans, wheat, cotton, rice and soybean oil, for the last three marketing years.",
     "ly": "Δ LY = change versus the prior marketing year (Stocks-to-Use in percentage points).",
@@ -207,9 +222,50 @@ st.caption(
 if view == "lr" and prev is None:
     st.info("Change vs last report isn't available for this commodity or region.")
 with t2:
-    st.download_button("Download table (CSV)", bs.to_csv(D, years, keys, commodity, system),
+    st.download_button("Download table (CSV)", bs.to_csv(D, years, keys, commodity, system, _extra),
                        file_name=f"{commodity}_{region}_balance_sheet_{view}.csv".replace(" ", "_"),
                        mime="text/csv", width="stretch")
+
+@st.fragment
+def jsa_entry():
+    """Type in JSA's own estimate for the end year (password-gated; blank rows stay empty)."""
+    pw = _secret("EDIT_PASSWORD")
+    if not pw:
+        return
+    with st.expander(f"JSA estimates — {region} {commodity} {mkt(e0)}"):
+        if not st.session_state.get("agency_ok"):
+            entered = st.text_input("Edit password", type="password", key="jsa_pw")
+            if entered and hmac.compare_digest(entered, pw):
+                st.session_state["agency_ok"] = True
+                st.rerun(scope="fragment")
+            elif entered:
+                st.error("Wrong password.")
+            return
+        editable = [k for k in keys if k not in jsa_est.DERIVED]
+        st.caption(f"Enter JSA's numbers in the units shown ({labels['qty']} · area {labels['area']} · yield "
+                   f"{labels['yield']}). Leave a row blank for no estimate; totals and Stocks-to-Use fill in "
+                   "from what you enter. Saving replaces this year's JSA estimate.")
+        cur_j = _jsa_all.get(e0, {})
+        with st.form(f"jsa_form_{region}_{commodity}_{system}_{e0}"):
+            cols_ = st.columns(3)
+            vals = {}
+            for i, k in enumerate(editable):
+                f = jsa_est.factor(k, commodity, system)
+                with cols_[i % 3]:
+                    vals[k] = st.number_input(bs.LABEL[k], value=(cur_j[k] * f if k in cur_j else None),
+                                              format="%.2f", key=f"jsa_{region}_{commodity}_{system}_{e0}_{k}")
+            note = st.text_input("Note (optional)", key=f"jsa_note_{region}_{commodity}_{e0}")
+            if st.form_submit_button("Save JSA estimate", type="primary"):
+                try:
+                    db.jsa_save(region, commodity, e0,
+                                {k: v / jsa_est.factor(k, commodity, system) for k, v in vals.items() if v is not None},
+                                note)
+                    st.success("Saved. Reload the page to see it in the table.")
+                except Exception as e:                                  # noqa: BLE001
+                    st.error(f"Could not save: {e}")
+
+
+jsa_entry()
 
 price, ticker = massive.front_month_price(commodity)
 if price is not None:

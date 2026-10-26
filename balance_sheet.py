@@ -198,27 +198,33 @@ def _fmt(x, dec: int, signed: bool, pct: bool) -> str:
 
 
 def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: str, system: str,
-                view: str, latest_year: int, colors: dict, title: tuple[str, str] | None = None) -> str:
-    """Grouped balance-sheet table, newest year first. `d` is in display units.
+                view: str, latest_year: int, colors: dict, title: tuple[str, str] | None = None,
+                extra: list | None = None) -> str:
+    """Grouped balance-sheet table, oldest year on the left and the newest on the right. `d` is in display units.
+
+    extra = [(header, {row key: value}, kind)] adds columns after the newest year (kind 'jsa' | 'delta' | 'avg').
 
     title = (headline, units line) draws a title bar inside the card above the header row, so the table is
     self-explanatory when it is copied or saved as a picture."""
     units = pm.unit_labels(commodity, system)
     signed = view != "current"
-    years_desc = sorted(years, reverse=True)
+    years_desc = sorted(years)                      # name kept from the old newest-first order; now oldest first
+    extra = extra or []
     dec = {k: _decimals(k, float(np.nanmax(np.abs(d.loc[d.index.isin(years), k].astype(float).values)))
                         if d.loc[d.index.isin(years), k].notna().any() else 0.0, commodity, system)
            for k in keys}
 
     head = "".join(
         f"<th class='{'cur' if y == latest_year else ''}'>{y}/{str(y + 1)[-2:]}</th>" for y in years_desc)
+    head += "".join(f"<th class='ex {kd}'>{html.escape(h)}</th>" for h, _, kd in extra)
+    ncols = len(years_desc) + len(extra)
     body = []
     last_group = None
     for k in keys:
         _, label, group, kind, style = next(r for r in ROWS if r[0] == k)
         if group != last_group:
             gunit = f"<span class='gu'>· {html.escape(units['qty'])}</span>" if group != "Area & Yield" else ""
-            body.append(f"<tr class='grp'><td colspan='{len(years_desc) + 1}'>{html.escape(group)} {gunit}</td></tr>")
+            body.append(f"<tr class='grp'><td colspan='{ncols + 1}'>{html.escape(group)} {gunit}</td></tr>")
             last_group = group
         unit = units.get(kind, "") if kind in ("area", "yield") else ("%" if kind == "pct" else "")
         cells = []
@@ -228,16 +234,24 @@ def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: s
             if signed and isinstance(x, float) and not np.isnan(x) and round(x, dec[k]) != 0:
                 cls += " pos" if x > 0 else " neg"
             cells.append(f"<td class='{cls.strip()}'>{_fmt(x, dec[k], signed, kind == 'pct')}</td>")
+        for _h, vals, kd in extra:
+            x = vals.get(k)
+            x = np.nan if x is None else x
+            sg = kd == "delta"
+            cls = f"ex {kd}"
+            if sg and not np.isnan(x) and round(x, dec[k]) != 0:
+                cls += " pos" if x > 0 else " neg"
+            cells.append(f"<td class='{cls}'>{_fmt(x, dec[k] if kd != 'jsa' else dec[k], sg, kind == 'pct')}</td>")
         body.append(f"<tr class='{style}'><th class='lab'>{html.escape(label)}"
                     f"{(' <span class=u>' + html.escape(unit) + '</span>') if unit else ''}</th>{''.join(cells)}</tr>")
 
     css = (
         "<style>"
-        ".bs-wrap{overflow-x:auto;border:1px solid %(border)s;border-radius:10px;background:#fff}"
-        ".bs-title{position:sticky;left:0;padding:14px 16px 10px;background:#fff;border-bottom:3px solid %(green)s}"
+        ".bs-wrap{direction:rtl;overflow-x:auto;border:1px solid %(border)s;border-radius:10px;background:#fff}"
+        ".bs-title{direction:ltr;position:sticky;left:0;padding:14px 16px 10px;background:#fff;border-bottom:3px solid %(green)s}"
         ".bs-title .t1{font:700 1.4rem/1.15 'EB Garamond',Georgia,serif;color:%(text)s}"
         ".bs-title .t2{font:700 0.95rem 'Source Sans 3','Source Sans Pro',Arial,sans-serif;color:%(green)s;margin-top:3px}"
-        "table.bs{border-collapse:separate;border-spacing:0;width:100%%;font-size:0.88rem;"
+        "table.bs{direction:ltr;border-collapse:separate;border-spacing:0;width:100%%;font-size:0.88rem;"
         "font-variant-numeric:tabular-nums;color:%(text)s}"
         "table.bs thead th{position:sticky;top:0;background:%(green)s;color:#fff;font-weight:600;"
         "padding:8px 12px;text-align:right;white-space:nowrap}"
@@ -248,6 +262,9 @@ def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: s
         "table.bs th.lab{position:sticky;left:0;background:#fff;text-align:left;font-weight:500;z-index:1}"
         "table.bs .u{font-size:0.7rem;font-weight:400;color:%(muted)s;margin-left:4px}""table.bs .gu{font-weight:400;letter-spacing:0;text-transform:none;font-size:0.72rem;color:%(muted)s;margin-left:4px}"
         "table.bs td.cur{background:#fbf7e8}"
+        "table.bs thead th.ex{background:#4a5a52}table.bs thead th.jsa{background:#0b5cab}"
+        "table.bs td.ex{border-left:1px solid %(border)s}table.bs td.jsa{background:#eef5fc;font-weight:600}"
+        "table.bs td.avg{background:#f7f7f7}"
         "table.bs tr.grp td{background:#eef3ef;color:%(green)s;font-size:0.7rem;font-weight:700;"
         "letter-spacing:0.12em;text-transform:uppercase;text-align:left;padding:5px 12px}"
         "table.bs tr.total td,table.bs tr.total th.lab{font-weight:700;background:#f4f7f5;"
@@ -268,12 +285,14 @@ def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: s
             f"<tbody>{''.join(body)}</tbody></table></div>")
 
 
-def to_csv(d: pd.DataFrame, years: list[int], keys: list[str], commodity: str, system: str) -> str:
+def to_csv(d: pd.DataFrame, years: list[int], keys: list[str], commodity: str, system: str,
+           extra: list | None = None) -> str:
     units = pm.unit_labels(commodity, system)
     rows = []
     for k in keys:
         kind = KIND[k]
         rows.append({"Category": LABEL[k], "Unit": "%" if kind == "pct" else units[kind],
                      **{f"{y}/{str(y + 1)[-2:]}": d.at[y, k] if y in d.index else np.nan
-                        for y in sorted(years, reverse=True)}})
+                        for y in sorted(years)},
+                     **{h: vals.get(k) for h, vals, _ in (extra or [])}})
     return pd.DataFrame(rows).to_csv(index=False)
