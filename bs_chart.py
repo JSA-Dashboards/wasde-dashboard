@@ -68,7 +68,7 @@ def show(view: pd.DataFrame, keys: list[str], years: list[int], labels: dict, co
             fig.add_trace(go.Bar(x=xs, y=series, name=bs.LABEL[k], marker_color=color, opacity=0.9,
                                  hovertemplate="%{x}: %{y:,.1f}<extra>" + bs.LABEL[k] + "</extra>"))
         else:
-            fig.add_trace(go.Scatter(x=xs, y=series, name=bs.LABEL[k] + (" (right)" if on_right else ""),
+            fig.add_trace(go.Scatter(x=xs, y=series, name=bs.LABEL[k],
                                      mode="lines+markers", line=dict(color=color, width=2.5), marker=dict(size=5),
                                      yaxis="y2" if on_right else "y",
                                      hovertemplate="%{x}: %{y:,.1f}<extra>" + bs.LABEL[k] + "</extra>"))
@@ -92,8 +92,8 @@ def show(view: pd.DataFrame, keys: list[str], years: list[int], labels: dict, co
     units = ", ".join(f"{bs.LABEL[k]} in {_unit(bs.KIND[k], labels)}" for k in sel)
     st.caption(f"{note}{commodity} ({region}) over the selected marketing years. "
                + ("Index: each line starts at 100 in the first year shown. " if indexed else f"Units: {units}. ")
-               + ("Stacked bars add the volume items together; other units stay as lines on the right axis. "
-                  if stacked else ""))
+               + ("Items in a second unit are drawn on the right axis. " if right and not indexed else "")
+               + ("Stacked bars add the volume items together; other units stay as lines. " if stacked else ""))
     data = pd.DataFrame({bs.LABEL[k]: [view.at[y, k] for y in ys] for k in sel}, index=xs)
     data.index.name = "Marketing year"
     st.download_button("Download chart data (CSV)", data.to_csv().encode("utf-8"),
