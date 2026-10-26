@@ -64,14 +64,18 @@ async function makeBlob() {
     onclone: (doc, el) => {
       const st = doc.createElement('style');          // sticky header / first column mis-place in a screenshot
       st.textContent = 'table.bs thead th, table.bs th.lab{position:static !important;left:auto !important;top:auto !important}' +
-        ' table.bs, table.bs *{font-family:Arial,Helvetica,sans-serif !important;letter-spacing:0 !important}';
+        ' table.bs, table.bs *{font-family:Arial,Helvetica,sans-serif !important;letter-spacing:0 !important}' +
+        ' .bs-title .t1{font-family:Georgia,serif !important}.bs-title .t2{font-family:Arial,Helvetica,sans-serif !important}' +
+        ' .bs-title{position:static !important}';
       doc.head.appendChild(st);
       el.style.overflow = 'visible';
       if (tbl) el.style.width = tbl.scrollWidth + 'px';
-      const h = doc.createElement('div');
-      h.textContent = CFG.title;
-      h.style.cssText = 'font:700 22px Georgia,serif;padding:12px 14px 10px;color:#32373c;background:#fff';
-      el.insertBefore(h, el.firstChild);
+      if (CFG.title) {
+        const h = doc.createElement('div');
+        h.textContent = CFG.title;
+        h.style.cssText = 'font:700 22px Georgia,serif;padding:12px 14px 10px;color:#32373c;background:#fff';
+        el.insertBefore(h, el.firstChild);
+      }
     }
   });
   return await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('Could not build the picture.')), 'image/png'));

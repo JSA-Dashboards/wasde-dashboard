@@ -198,8 +198,11 @@ def _fmt(x, dec: int, signed: bool, pct: bool) -> str:
 
 
 def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: str, system: str,
-                view: str, latest_year: int, colors: dict) -> str:
-    """Grouped balance-sheet table, newest year first. `d` is in display units."""
+                view: str, latest_year: int, colors: dict, title: tuple[str, str] | None = None) -> str:
+    """Grouped balance-sheet table, newest year first. `d` is in display units.
+
+    title = (headline, units line) draws a title bar inside the card above the header row, so the table is
+    self-explanatory when it is copied or saved as a picture."""
     units = pm.unit_labels(commodity, system)
     signed = view != "current"
     years_desc = sorted(years, reverse=True)
@@ -231,6 +234,9 @@ def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: s
     css = (
         "<style>"
         ".bs-wrap{overflow-x:auto;border:1px solid %(border)s;border-radius:10px;background:#fff}"
+        ".bs-title{position:sticky;left:0;padding:14px 16px 10px;background:#fff;border-bottom:3px solid %(green)s}"
+        ".bs-title .t1{font:700 1.4rem/1.15 'EB Garamond',Georgia,serif;color:%(text)s}"
+        ".bs-title .t2{font:700 0.95rem 'Source Sans 3','Source Sans Pro',Arial,sans-serif;color:%(green)s;margin-top:3px}"
         "table.bs{border-collapse:separate;border-spacing:0;width:100%%;font-size:0.88rem;"
         "font-variant-numeric:tabular-nums;color:%(text)s}"
         "table.bs thead th{position:sticky;top:0;background:%(green)s;color:#fff;font-weight:600;"
@@ -254,7 +260,11 @@ def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: s
         "</style>"
     ) % {"border": colors["border"], "text": colors["text"], "green": colors["green"], "dark": colors["dark"],
          "muted": colors["muted"], "good": colors["good"], "bad": colors["bad"]}
-    return (f"{css}<div class='bs-wrap'><table class='bs'><thead><tr><th>Category</th>{head}</tr></thead>"
+    title_html = ""
+    if title:
+        title_html = (f"<div class='bs-title'><div class='t1'>{html.escape(title[0])}</div>"
+                      f"<div class='t2'>{html.escape(title[1])}</div></div>")
+    return (f"{css}<div class='bs-wrap'>{title_html}<table class='bs'><thead><tr><th>Category</th>{head}</tr></thead>"
             f"<tbody>{''.join(body)}</tbody></table></div>")
 
 

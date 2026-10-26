@@ -185,13 +185,13 @@ keys = bs.visible_keys(N, years, commodity)
 V = bs.make_view(N, view, prev)
 D = bs.to_display(V, commodity, system, keys)
 
-st.markdown(bs.render_html(D, years, keys, commodity, system, view, latest, TABLE_COLORS),
+_tbl_title = (f"{region} {commodity} — Supply & Demand Balance Sheet",
+              f"Units: {labels['qty']} · area {labels['area']} · yield {labels['yield']}"
+              f" · {mkt(b0)} – {mkt(e0)}{'' if view == 'current' else ' · ' + view_label}")
+st.markdown(bs.render_html(D, years, keys, commodity, system, view, latest, TABLE_COLORS, title=_tbl_title),
             unsafe_allow_html=True)
 _slug = f"{region}_{commodity}".replace(" ", "_").replace(",", "")
-export_buttons.image_buttons(
-    "table", f"{region} {commodity} — Supply & Demand Balance Sheet · {labels['qty']}"
-             f"{'' if view == 'current' else ' · ' + view_label}",
-    f"{_slug}_balance_sheet.png")
+export_buttons.image_buttons("table", "", f"{_slug}_balance_sheet.png")
 
 notes = {
     "current": "Current USDA estimates and forecasts; the shaded column is the current marketing year.",
