@@ -264,8 +264,9 @@ def brazil_tab():
                 orientation="h", marker_color=C_GREEN,
                 hovertemplate="%{y}: %{x:,.1f}<extra></extra>"))
             fig.update_layout(**style.plot_layout(
-                xaxis_title=ul, height=max(320, len(top) * 32), showlegend=False,
-                margin=dict(l=170, r=8, t=12, b=40)))
+                title=dict(text=f"Brazil {what} — Top States by Production ({labels[last]}) — CONAB", font=dict(size=13)),
+                xaxis_title=ul, height=max(340, len(top) * 32 + 20), showlegend=False,
+                margin=dict(l=170, r=8, t=45, b=40)))
             export_buttons.plotly_chart(fig, width="stretch")
         with c4:
             style.sec("State detail")
@@ -972,8 +973,6 @@ def compare_block(country: str, ccode: str):
     usda_row = next((r for r in rows if r["kind"] == "usda"), None)
 
     def panel(title, values, fmt, ytitle, ref=None, tag=""):
-        st.markdown(f"<div style='font-weight:600;font-size:0.9rem;color:{style.TEXT}'>{title}</div>",
-                    unsafe_allow_html=True)
         def label(v, i):
             if v is None:
                 return ""
@@ -986,8 +985,9 @@ def compare_block(country: str, ccode: str):
         if ref is not None:
             fig.add_hline(y=ref, line_dash="dot", line_color="#9aa8a0", line_width=1, layer="below")
         top = max([v for v in values if v is not None] + [ref or 0] or [1])
-        fig.update_layout(**style.plot_layout(yaxis_title=ytitle, height=290, showlegend=False,
-                                              margin=dict(l=10, r=10, t=30, b=40)))
+        fig.update_layout(**style.plot_layout(
+            title=dict(text=f"{country} {crop.lower()} {yr}/{str(yr + 1)[-2:]} — {title}", font=dict(size=13)),
+            yaxis_title=ytitle, height=320, showlegend=False, margin=dict(l=10, r=10, t=60, b=40)))
         fig.update_yaxes(range=[0, top * 1.32] if top else None)
         export_buttons.plotly_chart(fig, width="stretch", key=f"cmp_{tag}_{ccode}_{crop}_{yr}")
 
@@ -997,8 +997,6 @@ def compare_block(country: str, ccode: str):
         panel(f"Production ({ul})", pv, lambda v: f"{v:,.1f}", ul,
               None if usda_row is None else cvt(usda_row["prod"], crop, imperial), tag="prod")
     with c2:
-        st.markdown(f"<div style='font-weight:600;font-size:0.9rem;color:{style.TEXT}'>Area (M ha)</div>",
-                    unsafe_allow_html=True)
         fa = go.Figure()
         for lab, key, col in (("Planted", "planted", PLANTED_C), ("Harvested", "harvested", HARVESTED_C)):
             vals = [None if r[key] is None or pd.isna(r[key]) else r[key] / 1000 for r in rows]
@@ -1009,8 +1007,9 @@ def compare_block(country: str, ccode: str):
         top = max([r[k] / 1000 for r in rows for k in ("planted", "harvested")
                    if r[k] is not None and not pd.isna(r[k])] or [1])
         fa.update_layout(**style.plot_layout(
-            yaxis_title="M ha", height=290, barmode="group",
-            legend=dict(orientation="h", y=1.12, x=0), margin=dict(l=10, r=10, t=30, b=40)))
+            title=dict(text=f"{country} {crop.lower()} {yr}/{str(yr + 1)[-2:]} — Area (M ha)", font=dict(size=13)),
+            yaxis_title="M ha", height=320, barmode="group",
+            legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0), margin=dict(l=10, r=10, t=80, b=40)))
         fa.update_yaxes(range=[0, top * 1.2])
         export_buttons.plotly_chart(fa, width="stretch", key=f"cmp_area_{ccode}_{crop}_{yr}")
     with c3:

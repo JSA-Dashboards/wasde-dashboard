@@ -235,7 +235,7 @@ for i, attr in enumerate(sel_attrs):
         hovertemplate=f"<b>{attr}</b><br>%{{x}}: %{{y:,.1f}} {ul}<extra></extra>",
     ))
 fig.update_layout(**style.plot_layout(
-    title=dict(text=f"{commodity} {mkt_year}/{str(mkt_year+1)[-2:]} — WASDE Revisions",
+    title=dict(text=f"{_ctx} — WASDE Revisions",
                font=dict(size=13)),
     yaxis_title=ul,
     height=380,
@@ -310,7 +310,8 @@ with st.expander("Compare with prior marketing year"):
                     mode="lines+markers", marker=dict(size=5),
                 ))
         fig2.update_layout(**style.plot_layout(
-            title=dict(text=f"Current vs Prior Year — {commodity}", font=dict(size=13)),
+            title=dict(text=f"{_ctry} {commodity} — {mkt_year}/{str(mkt_year+1)[-2:]} vs {mkt_year-1}/{str(mkt_year)[-2:]}",
+                       font=dict(size=13)),
             yaxis_title=ul, height=350,
         ))
         export_buttons.plotly_chart(fig2, use_container_width=True)

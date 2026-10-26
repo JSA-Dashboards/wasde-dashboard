@@ -65,6 +65,7 @@ with _c4:
 st.markdown("</div>", unsafe_allow_html=True)
 
 country = "0000US" if region == "US" else "0000World"
+_ctry = "United States" if region == "US" else "World"          # country wording used in chart titles
 ul = unit_label(commodity, imperial)
 
 st.markdown(
@@ -249,7 +250,7 @@ for attr, color in USE_BUCKETS:
         marker_color=color,
     ))
 fig_abs.update_layout(**style.plot_layout(
-    title=dict(text=f"{commodity} Use Components — {region}", font=dict(size=13)),
+    title=dict(text=f"{_ctry} {commodity} — Use Components", font=dict(size=13)),
     barmode="stack",
     yaxis_title=ul,
     height=320,
@@ -277,7 +278,7 @@ for attr, color in USE_BUCKETS:
         mode="lines",
     ))
 fig_share.update_layout(**style.plot_layout(
-    title=dict(text="% Share of Total Use — stacked", font=dict(size=13)),
+    title=dict(text=f"{_ctry} {commodity} — % Share of Total Use (stacked)", font=dict(size=13)),
     yaxis_title="%",
     height=300,
 ))
@@ -303,7 +304,7 @@ with c1:
     fig_cmp.add_trace(go.Bar(name="5yr avg", x=labels, y=avg_vals,
                               marker_color=style.BORDER))
     fig_cmp.update_layout(**style.plot_layout(
-        title=dict(text="Volume Comparison", font=dict(size=13)),
+        title=dict(text=f"{_ctry} {commodity} — Volume Comparison", font=dict(size=13)),
         barmode="group", yaxis_title=ul, height=280,
     ))
     export_buttons.plotly_chart(fig_cmp, use_container_width=True)
@@ -328,7 +329,7 @@ with c2:
         fig_stu.add_hline(y=15, line_dash="dot", line_color=C_GOLD,
                           annotation_text="15% threshold", annotation_position="top right")
         fig_stu.update_layout(**style.plot_layout(
-            title=dict(text="Stocks-to-Use % History", font=dict(size=13)),
+            title=dict(text=f"{_ctry} {commodity} — Stocks-to-Use % History", font=dict(size=13)),
             yaxis_title="%", height=280,
         ))
         export_buttons.plotly_chart(fig_stu, use_container_width=True)

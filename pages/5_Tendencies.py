@@ -70,6 +70,7 @@ with _c5:
 st.markdown("</div>", unsafe_allow_html=True)
 
 country = "0000US" if region == "US" else "0000World"
+_ctry = "United States" if region == "US" else "World"          # country wording used in chart titles
 ul = unit_label(commodity, imperial)
 
 st.markdown(
@@ -199,7 +200,7 @@ fig_avg = go.Figure(go.Bar(
 fig_avg.add_hline(y=0, line_color=style.BORDER, line_width=1)
 fig_avg.update_layout(**style.plot_layout(
     title=dict(
-        text=f"{commodity} — Avg {sel_attr} Revision by WASDE Month ({region})",
+        text=f"{_ctry} {commodity} — Avg {sel_attr} Revision by WASDE Month",
         font=dict(size=13),
     ),
     yaxis_title=f"Avg revision ({ul})",
@@ -259,7 +260,7 @@ with st.expander("Multi-attribute tendency heatmap"):
             hovertemplate="<b>%{y}</b><br>%{x}: %{z:+,.1f}<extra></extra>",
         ))
         fig_heat.update_layout(**style.plot_layout(
-            title=dict(text=f"{commodity} — Average Revision Heatmap ({region})",
+            title=dict(text=f"{_ctry} {commodity} — Average Revision Heatmap",
                        font=dict(size=13)),
             height=360,
             margin=dict(l=160, r=8, t=36, b=8),

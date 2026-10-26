@@ -318,7 +318,7 @@ with col_chart:
     ))
     fig_top.update_layout(**style.plot_layout(
         title=dict(
-            text=f"{commodity} — Top {top_n} {attr_choice} ({mkt_year}/{str(mkt_year+1)[-2:]})",
+            text=f"World {commodity} — Top {top_n} Countries by {attr_choice} ({mkt_year}/{str(mkt_year+1)[-2:]})",
             font=dict(size=13),
         ),
         xaxis_title=ul,
@@ -391,7 +391,7 @@ with c1:
             orientation="h", marker_color=C_LIME,
         ))
         fig_p.update_layout(**style.plot_layout(
-            title=dict(text="Top 8 Producers", font=dict(size=13)),
+            title=dict(text=f"World {commodity} — Top 8 Producers ({mkt_year}/{str(mkt_year+1)[-2:]})", font=dict(size=13)),
             xaxis_title=ul, height=300,
             margin=dict(l=130, r=8, t=36, b=8),
         ))
@@ -406,7 +406,7 @@ with c2:
             orientation="h", marker_color=C_BLUE,
         ))
         fig_e.update_layout(**style.plot_layout(
-            title=dict(text="Top 8 Exporters", font=dict(size=13)),
+            title=dict(text=f"World {commodity} — Top 8 Exporters ({mkt_year}/{str(mkt_year+1)[-2:]})", font=dict(size=13)),
             xaxis_title=ul, height=300,
             margin=dict(l=130, r=8, t=36, b=8),
         ))
