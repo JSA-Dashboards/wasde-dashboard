@@ -144,20 +144,58 @@ XML_TABLES = {                                    # sub-report title -> (commodi
 }
 
 
+def _esmis_page(page: int) -> dict:
+    """One page of the WASDE release catalogue; the archive sometimes answers with a non-JSON hiccup, so retry."""
+    last = None
+    for k in range(6):
+        r = requests.get(ESMIS, params={"page": page}, timeout=60)
+        try:
+            return r.json()
+        except ValueError:
+            last = f"{r.status_code} {r.text[:60]!r}"
+            time.sleep(2 * (k + 1))
+    raise RuntimeError(f"ESMIS page {page} failed: {last}")
+
+
 def esmis_xml_urls(since: date) -> dict[tuple[int, int], tuple[date, str]]:
     out, page = {}, 0
     while True:
-        r = requests.get(ESMIS, params={"page": page}, timeout=60).json()
+        r = _esmis_page(page)
         for it in r["results"]:
             d = datetime.fromisoformat(it["release_datetime"].replace("+0000", "+00:00")).date()
-            if d < since:
-                return out
+            if d < since:                      # the catalogue is not strictly date-ordered: skip, don't stop
+                continue
             xml = next((f for f in it["files"] if f.lower().endswith(".xml")), None)
             if xml:
                 out.setdefault((d.year, d.month), (d, xml))
         page += 1
         if page >= r["pager"]["total_pages"]:
             return out
+        time.sleep(0.3)
+
+
+def fetch_finals(first_my: int = 2011, last_my: int = 2023) -> pd.DataFrame:
+    """'Current' (final) value of each older marketing year, taken from USDA's own August report two years on,
+    the last WASDE in which that year still appears (each report shows prior-final, current-estimate and next
+    year). Replaces the workbook's hand-kept Current column, whose cells were inconsistent for some years."""
+    idx = esmis_xml_urls(date(first_my + 2, 1, 1))
+    frames = []
+    for my in range(first_my, last_my + 1):
+        hit = idx.get((my + 2, 8))
+        if not hit:
+            print(f"  {my}/{str(my + 1)[-2:]}: no August {my + 2} report in the archive")
+            continue
+        df = parse_xml_report(requests.get(hit[1], timeout=180).content.decode("utf-8", "ignore"), hit[0])
+        df = df[df["market_year"] == my].copy()
+        if df.empty:
+            print(f"  {my}/{str(my + 1)[-2:]}: not found in the {hit[0]} report")
+            continue
+        df["kind"], df["release_date"], df["source"] = "current", None, "wasde_final"
+        print(f"  {my}/{str(my + 1)[-2:]}: {len(df)} values from the {hit[0]} report")
+        frames.append(df)
+        time.sleep(1)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+        columns=["commodity", "market_year", "kind", "release_date", "item", "value", "source"])
 
 
 def parse_xml_report(xml_text: str, rel: date) -> pd.DataFrame:
@@ -243,6 +281,8 @@ def main():
     ap.add_argument("--seed-workbook", help="load the history from JSA's WASDE Progression.xlsx")
     ap.add_argument("--since", help="YYYY-MM: fetch every WASDE CSV from this month (default: 3 months back)")
     ap.add_argument("--setup", action="store_true", help="create the table + grants and exit")
+    ap.add_argument("--finals", action="store_true",
+                    help="rebuild each older year's Current (final) values from USDA's own August reports")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -264,6 +304,15 @@ def main():
         if not args.dry_run:
             _load(conn, df, "DELETE FROM JSA.WASDE.US_PROGRESSION WHERE source = %s", ("excel",))
             print("Workbook loaded.")
+
+    if args.finals:
+        df = fetch_finals()
+        print(f"Finals: {len(df)} values for marketing years {df.market_year.min()}-{df.market_year.max()}")
+        if not args.dry_run:
+            _load(conn, df, "DELETE FROM JSA.WASDE.US_PROGRESSION WHERE source = %s", ("wasde_final",))
+            print("Finals loaded.")
+        conn.close()
+        return
 
     today = date.today()
     if args.since:

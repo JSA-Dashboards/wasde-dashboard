@@ -242,7 +242,8 @@ def show_seasonal(commodity: str):
     unit_txt = "%" if kind == "pct" else ulab
     nice = "Stocks-to-Use" if item == "Stocks/Use" else avail[item][0]
     yaxis = dict(title=unit_txt, gridcolor=style.BORDER, tickfont=dict(color="#1f7a3d", size=12))
-    yaxis.update({"ticksuffix": "%", "tickformat": ".1f"} if kind == "pct" else {"tickformat": ",.0f"})
+    yaxis.update({"ticksuffix": "%", "tickformat": ".1f"} if kind == "pct"
+                 else {"tickformat": ",.1f"} if kind in ("yield", "area") else {"tickformat": ",.0f"})
     fig.update_layout(**style.plot_layout(
         title=dict(text=f"<b>United States {commodity} — Seasonal {nice} Changes</b>",
                    font=dict(size=17, color="#1f7a3d"), x=0.5, xanchor="center"),
