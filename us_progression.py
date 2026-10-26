@@ -251,7 +251,7 @@ def show_seasonal(commodity: str):
         yaxis=yaxis,
         margin=dict(l=10, r=10, t=110, b=45), height=540))
     export_buttons.plotly_chart(fig, width="stretch", key=f"seas_chart_{commodity}_{item}".replace("/", "_"),
-                                filename=f"US_{commodity}_seasonal_{item.replace('/', '_')}.png")
+                                filename=f"US_{commodity}_seasonal_{item.replace('/', '_')}")
     st.caption("Each line is one marketing year, plotted at every monthly WASDE from May through April plus the current "
                "estimate (shown once the April report is out). The dotted line is the year in progress, the heavy dashed "
                "line last year. " + ("The grey dividers mark the corn futures spread windows. " if marks else "")
