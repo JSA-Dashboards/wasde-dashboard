@@ -32,6 +32,7 @@ def _fresh_modules():
 _fresh_modules()
 
 import balance_sheet as bs  # noqa: E402
+import bs_chart  # noqa: E402
 import db  # noqa: E402
 import massive  # noqa: E402
 import psd_meta as pm  # noqa: E402
@@ -202,6 +203,10 @@ if price is not None:
     fut_val, fut_label = massive.fmt_futures(commodity, price, ticker)
     with futures_slot:
         st.metric(fut_label, fut_val)
+
+# ── Chart any line item of the table above ────────────────────────────────────
+style.sec("Chart any line")
+bs_chart.show(cur_view, keys, years, labels, commodity, region, mkt)
 
 # ── Trend charts for the selected range ───────────────────────────────────────
 style.sec("Trends")
