@@ -15,6 +15,7 @@ import streamlit as st
 
 import db
 import export_buttons
+import jsa_est
 import sd_table
 import style
 
@@ -115,11 +116,52 @@ def show(commodity: str, my: int, colors: dict):
         rows.append((f"{name} ({u[kind]})" if kind in ("area", "yield") else name, "pct" if kind == "pct" else "qty",
                      conv, dec))
 
+    # Beside Current: JSA's own estimate (typed on the Balance Sheet page), change vs last year's final, the average
+    # of the five finals before it, and the change vs that average.
+    cur_label = {name: conv.get("Current") for name, _k, conv, _d in rows}
+    finals = {}
+    for k in range(1, 6):
+        _d_, _l_, v_prev = build(commodity, my - k)
+        finals[k] = {item: v.get("Current") for item, v in v_prev.items()}
+    jsa_base = jsa_est.load("United States", commodity).get(my, {})
+    jsa_base = jsa_est._derive(jsa_base) if jsa_base else {}
+    to_bs = {"Harvested Area": "area_harvested", "Yield": "yield", "Beginning Stocks": "beginning_stocks",
+             "Production": "production", "Imports": "imports", "Total Supply": "total_supply", "Exports": "exports",
+             "Feed": "feed", "FSI": "fsi", "Crush": "crush", "Domestic Consumption": "domestic",
+             "Total Demand": "total_use", "Ending Stocks": "ending_stocks", "Stocks/Use": "stu"}
+    jsa_col, d_ly, avg5, d_avg = {}, {}, {}, {}
+    for item, name, kind in ROWS[commodity]:
+        if item not in vals:
+            continue
+        lab = f"{name} ({u[kind]})" if kind in ("area", "yield") else name
+        cur_v = cur_label.get(lab)
+        jb = jsa_base.get(to_bs[item])
+        if jb is not None:                                              # base units -> million bu / M ac / bu/ac
+            if kind == "qty":
+                jv = jb / 1000 if metric else jb / (T_PER_BU[commodity] * 1000)
+            elif kind == "area":
+                jv = jb / 1000 if metric else jb / 1000 / HA_PER_AC
+            elif kind == "yield":
+                jv = jb if metric else jb * HA_PER_AC / T_PER_BU[commodity]
+            else:
+                jv = jb
+            jsa_col[lab] = jv
+        prev_vals = [_convert(finals[k][item], kind, commodity, metric) for k in range(1, 6)
+                     if finals[k].get(item) is not None]
+        if cur_v is not None and finals[1].get(item) is not None:
+            d_ly[lab] = cur_v - _convert(finals[1][item], kind, commodity, metric)
+        if len(prev_vals) >= 3:
+            avg5[lab] = sum(prev_vals) / len(prev_vals)
+            if cur_v is not None:
+                d_avg[lab] = cur_v - avg5[lab]
+    extra = [(f"JSA Est. {my}/{str(my + 1)[-2:]}", "jsa", jsa_col), ("Δ vs LY", "delta", d_ly),
+             ("5-Yr Avg", "avg", avg5), ("Δ vs Avg", "delta", d_avg)]
+
     heading = f"{my}/{str(my + 1)[-2:]} marketing year"
     unit_txt = "WASDE units: million bushels" if not metric else "1,000 MT"
     u_line = f"Units: {'1,000 MT · area M ha · yield t/ha' if metric else 'million bushels · area million acres · yield bu/ac'}"
     st.markdown(sd_table.render(rows, labels, "Current", unit_txt, colors, trend=True,
-                                bold={"Total Supply", "Total Demand", "Ending Stocks"}, heading=heading,
+                                bold={"Total Supply", "Total Demand", "Ending Stocks"}, heading=heading, extra=extra,
                                 title=(f"United States {commodity} — Supply & Demand by WASDE Release",
                                        f"{u_line} · {my}/{str(my + 1)[-2:]} marketing year")),
                 unsafe_allow_html=True)
@@ -128,13 +170,15 @@ def show(commodity: str, my: int, colors: dict):
     have = sorted({_label((x.year, x.month)) for x in d[d.kind == "release"].release_date})
     blank = [lb for lb in labels[:-1] if lb not in have]
     note = ("Each value is colored by its change from the previous report (green up, red down); Current is the latest "
-            "WASDE (the final estimate for older years). ")
+            "WASDE (the final estimate for older years). Δ vs LY and 5-Yr Avg compare Current with the final figures of "
+            "the prior year and the five years before it; JSA Est. is typed in on the Balance Sheet page (United States). ")
     if blank:
         note += f"Blank columns ({', '.join(blank)}) have no report yet or none was published that month."
     st.caption(note + " Source: USDA WASDE; history 2011/12–2024/25 from JSA's WASDE Progression workbook, newer "
                "releases from USDA's monthly WASDE files.")
 
-    wide = pd.DataFrame({r[0]: {lb: r[2].get(lb) for lb in labels} for r in rows}).T
+    wide = pd.DataFrame({r[0]: {**{lb: r[2].get(lb) for lb in labels}, **{h: ev.get(r[0]) for h, _k, ev in extra}}
+                         for r in rows}).T
     st.download_button("Download this year (CSV)", wide.to_csv().encode("utf-8"),
                        file_name=f"US_{commodity}_WASDE_progression_{my}_{str(my + 1)[-2:]}.csv", mime="text/csv",
                        key=f"usp_dl_{commodity}_{my}")

@@ -19,14 +19,16 @@ def _fmt(v, dec: int, signed: bool, pct: bool = False) -> str:
 
 def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: dict, signed: bool = False,
            trend: bool = False, bold: set | None = None, heading: str | None = None,
-           title: tuple[str, str] | None = None) -> str:
+           title: tuple[str, str] | None = None, extra: list | None = None) -> str:
     """rows = [(label, kind, {season: value}[, decimals]), ...]; kind in {'qty', 'pct'}.
 
     seasons are shown in the order given. trend=True colours each value by its change from the previous column
     (the `cur` column is left plain). bold = row labels to emphasise (default: Total Supply / Total Use / Ending Stocks)."""
     bold = BOLD if bold is None else bold
+    extra = extra or []          # [(header, kind 'jsa'|'delta'|'avg', {row label: value})] after the last season
     head = "".join(f"<th class='{'cur' if s == cur else ''}'>{html.escape(s)}</th>" for s in seasons)
-    body = [f"<tr class='grp'><td colspan='{len(seasons) + 1}'>{html.escape(heading or 'Balance sheet')} "
+    head += "".join(f"<th class='ex {kd}'>{html.escape(h)}</th>" for h, kd, _ in extra)
+    body = [f"<tr class='grp'><td colspan='{len(seasons) + len(extra) + 1}'>{html.escape(heading or 'Balance sheet')} "
             f"<span class='gu'>· {html.escape(unit)}</span></td></tr>"]
     for row in rows:
         label, kind, vals = row[:3]
@@ -45,6 +47,16 @@ def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: d
                     cls += " pos" if x > prev else " neg"
                 prev = x
             cells.append(f"<td class='{cls.strip()}'>{_fmt(x, dec, signed, kind == 'pct')}</td>")
+        for _h, kd, ev in extra:
+            x = ev.get(label)
+            cls = f"ex {kd}"
+            sg = kd == "delta"
+            if sg and isinstance(x, (int, float)) and x == x and round(x, dec) != 0:
+                cls += " pos" if x > 0 else " neg"
+            txt = _fmt(x, dec, sg, kind == "pct")
+            if sg and kind == "pct" and txt.endswith("%"):
+                txt = txt[:-1] + "pp"
+            cells.append(f"<td class='{cls}'>{txt}</td>")
         body.append(f"<tr class='{style}'><th class='lab'>{html.escape(label)}</th>{''.join(cells)}</tr>")
     css = (
         "<style>"
@@ -63,6 +75,9 @@ def render(rows: list[tuple], seasons: list[str], cur: str, unit: str, colors: d
         "table.bs th.lab{position:sticky;left:0;background:#fff;text-align:left;font-weight:500;z-index:1}"
         "table.bs .gu{font-weight:400;letter-spacing:0;text-transform:none;font-size:0.72rem;color:%(muted)s;margin-left:4px}"
         "table.bs td.cur{background:#fbf7e8}"
+        "table.bs thead th.ex{background:#4a5a52}table.bs thead th.jsa{background:#0b5cab}"
+        "table.bs td.ex{border-left:1px solid %(border)s}table.bs td.jsa{background:#eef5fc;font-weight:600}"
+        "table.bs td.avg{background:#f7f7f7}"
         "table.bs tr.grp td{background:#eef3ef;color:%(green)s;font-size:0.7rem;font-weight:700;"
         "letter-spacing:0.12em;text-transform:uppercase;text-align:left;padding:5px 12px}"
         "table.bs tr.total td,table.bs tr.total th.lab{font-weight:700;background:#f4f7f5;"
