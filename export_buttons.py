@@ -89,9 +89,10 @@ async function makeBlob() {
       st.textContent = 'table.bs thead th, table.bs th.lab{position:static !important;left:auto !important;top:auto !important}' +
         ' table.bs, table.bs *{font-family:Arial,Helvetica,sans-serif !important;letter-spacing:0 !important}' +
         ' .bs-title .t1{font-family:Georgia,serif !important}.bs-title .t2{font-family:Arial,Helvetica,sans-serif !important}' +
-        ' .bs-title{position:static !important}';
+        ' .bs-title{position:static !important}' +
+        ' .bs-wrap{direction:ltr !important;overflow:visible !important}';   // the live table scrolls from the right (rtl)
       doc.head.appendChild(st);
-      el.style.overflow = 'visible';
+      el.style.overflow = 'visible'; el.style.direction = 'ltr'; el.scrollLeft = 0;
       if (tbl && !inline) el.style.width = tbl.scrollWidth + 'px';
       if (CFG.title) {
         const h = doc.createElement('div');

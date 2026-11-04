@@ -178,9 +178,7 @@ def to_display(v: pd.DataFrame, commodity: str, system: str, keys: list[str]) ->
 def _decimals(key: str, rowmax: float, commodity: str, system: str) -> int:
     kind = KIND[key]
     if kind == "qty":
-        if system == "metric":
-            return 0 if rowmax >= 1000 else 1
-        return 0 if (rowmax >= 10000 and pm.imperial_spec(commodity)["bu_per_mt"] is None) else 1
+        return 0                                    # whole numbers everywhere except area, yield and Stocks-to-Use
     if kind == "area":
         return 2 if rowmax < 10 else 1
     if kind == "yield":
