@@ -34,6 +34,7 @@ def _fresh_modules():
 _fresh_modules()
 
 import balance_sheet as bs  # noqa: E402
+import baseline  # noqa: E402
 import bs_chart  # noqa: E402
 import export_buttons  # noqa: E402
 import jsa_est  # noqa: E402
@@ -270,6 +271,10 @@ if price is not None:
     fut_val, fut_label = massive.fmt_futures(commodity, price, ticker)
     with futures_slot:
         st.metric(fut_label, fut_val)
+
+# ── USDA 10-year baseline (U.S. only) ─────────────────────────────────────────
+if region == "United States" and baseline.available(commodity):
+    baseline.show(commodity, TABLE_COLORS)
 
 # ── Chart any line item of the table above ────────────────────────────────────
 style.sec("Chart any line")
