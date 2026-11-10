@@ -286,6 +286,9 @@ if price is not None:
 # ── USDA 10-year baseline (U.S. only) ─────────────────────────────────────────
 if region == "United States" and baseline.available(commodity):
     baseline.show(commodity, TABLE_COLORS)
+elif baseline.available(commodity):
+    st.caption(f"USDA 10-year baseline (projections through 2036/37) is available for the **United States** only. "
+               f"Select United States as the region to see the {commodity} baseline.")
 
 # ── Chart any line item of the table above ────────────────────────────────────
 style.sec("Chart any line")
