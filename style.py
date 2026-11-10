@@ -235,10 +235,16 @@ _NAV_PAGES = [
 
 def nav_bar():
     """Render horizontal page-link nav bar. Call after inject()."""
-    cols = st.columns(len(_NAV_PAGES))
+    cols = st.columns([1] * len(_NAV_PAGES) + [0.8])
     for col, (path, label) in zip(cols, _NAV_PAGES):
         with col:
             st.page_link(f"{path}.py", label=label, use_container_width=True)
+    with cols[-1]:
+        # Pages cache their Snowflake reads for up to an hour; this drops the cache so data the overnight/report-day
+        # jobs just loaded shows now. (It re-reads Snowflake; it does not pull from USDA.)
+        if st.button("↻ Refresh", key="refresh_data", help="Reload the latest data from the database", width="stretch"):
+            st.cache_data.clear()
+            st.rerun()
 
 
 def disclaimer():
