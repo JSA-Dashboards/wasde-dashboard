@@ -241,6 +241,10 @@ def jsa_entry():
                 st.error("Wrong password.")
             return
         editable = [k for k in keys if k not in jsa_est.DERIVED]
+        if st.session_state.pop("jsa_cleared", None) == e0:     # a clear was just saved: drop the old field values
+            for k in editable:
+                st.session_state.pop(f"jsa_{region}_{commodity}_{system}_{e0}_{k}", None)
+            _jsa_all.pop(e0, None)
         st.caption(f"Enter JSA's numbers in the units shown ({labels['qty']} · area {labels['area']} · yield "
                    f"{labels['yield']}). Leave a row blank for no estimate; totals and Stocks-to-Use fill in "
                    "from what you enter. Saving replaces this year's JSA estimate.")
@@ -262,6 +266,13 @@ def jsa_entry():
                     st.success("Saved. Reload the page to see it in the table.")
                 except Exception as e:                                  # noqa: BLE001
                     st.error(f"Could not save: {e}")
+        if cur_j and st.button("Clear JSA estimate for this year", key=f"jsa_clear_{region}_{commodity}_{e0}"):
+            try:
+                db.jsa_save(region, commodity, e0, {}, "")
+                st.session_state["jsa_cleared"] = e0            # fields are emptied at the top of the next run
+                st.rerun(scope="fragment")
+            except Exception as e:                                      # noqa: BLE001
+                st.error(f"Could not clear: {e}")
 
 
 jsa_entry()
