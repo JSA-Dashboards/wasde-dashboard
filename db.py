@@ -229,6 +229,32 @@ def psd_history(commodity_code: str, country_code: str) -> pd.DataFrame:
     """, (commodity_code, country_code))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def psd_top_exporters(commodity_code: str, market_year: int, n: int = 5) -> pd.DataFrame:
+    """The n largest exporters of a commodity in a marketing year (World row excluded; attribute 88 = exports)."""
+    return _query("""
+        SELECT h.country_code, COALESCE(c.country_name, h.country_code) AS country_name, h.value
+        FROM JSA.WASDE.PSD_HISTORY h
+        LEFT JOIN JSA.WASDE.PSD_COUNTRIES c ON c.country_code = h.country_code
+        WHERE h.commodity_code = %s AND h.attribute_id = 88 AND h.market_year = %s
+          AND h.country_code <> '00' AND h.value > 0
+        ORDER BY h.value DESC
+        LIMIT %s
+    """, (commodity_code, int(market_year), int(n)))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def psd_history_multi(commodity_code: str, country_codes: tuple) -> pd.DataFrame:
+    """PSD history for several countries at once (adds a country_code column)."""
+    marks = ", ".join(["%s"] * len(country_codes))
+    return _query(f"""
+        SELECT country_code, market_year, attribute_id, unit_id, value, as_of
+        FROM JSA.WASDE.PSD_HISTORY
+        WHERE commodity_code = %s AND country_code IN ({marks})
+        ORDER BY market_year
+    """, (commodity_code, *country_codes))
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def psd_loaded_commodities() -> list[str]:
     """PSD commodity codes that have history loaded (the first full load fills these in one by one)."""

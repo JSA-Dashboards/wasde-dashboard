@@ -57,7 +57,7 @@ SNAPSHOT_KEY = {
     "Area Harvested": "area_harvested",
 }
 
-VIEWS = {"Current": "current", "Δ LR": "lr", "Δ LY": "ly", "Δ 5YA": "5ya"}
+VIEWS = {"Current": "current", "Δ LR": "lr", "Δ LY": "ly", "5Y Avg": "avg", "Δ 5YA": "5ya"}
 
 
 def _kind(key: str) -> str:
@@ -127,6 +127,8 @@ def make_view(n: pd.DataFrame, view: str, prev: pd.DataFrame | None = None) -> p
         out = full
     elif view == "ly":
         out = full - full.shift(1)
+    elif view == "avg":                              # average of the five years before each year
+        out = full.shift(1).rolling(5, min_periods=3).mean()
     elif view == "5ya":
         out = full - full.shift(1).rolling(5, min_periods=3).mean()
     else:  # "lr"
@@ -205,7 +207,7 @@ def render_html(d: pd.DataFrame, years: list[int], keys: list[str], commodity: s
     title = (headline, units line) draws a title bar inside the card above the header row, so the table is
     self-explanatory when it is copied or saved as a picture."""
     units = pm.unit_labels(commodity, system)
-    signed = view != "current"
+    signed = view not in ("current", "avg")
     years_desc = sorted(years)                      # name kept from the old newest-first order; now oldest first
     extra = extra or []
     dec = {k: _decimals(k, float(np.nanmax(np.abs(d.loc[d.index.isin(years), k].astype(float).values)))

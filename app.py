@@ -37,6 +37,7 @@ import balance_sheet as bs  # noqa: E402
 import baseline  # noqa: E402
 import bs_chart  # noqa: E402
 import export_buttons  # noqa: E402
+import exporters  # noqa: E402
 import jsa_est  # noqa: E402
 import db  # noqa: E402
 import massive  # noqa: E402
@@ -91,18 +92,29 @@ if ctry.empty:
     style.disclaimer()
     st.stop()
 names = dict(zip(ctry.country_name, ctry.country_code))
-ordered = [n for n in ("World", "United States") if n in names] + sorted(
+ordered = [n for n in ("World", "United States") if n in names] + [exporters.LABEL] + sorted(
     n for n in names if n not in ("World", "United States"))
 with c2:
     region = st.selectbox("Region / country", ordered, key=f"bs_region_{code}")
 
-df = db.psd_history(code, names[region])
-if df.empty:
+group_names: list[str] = []
+if region == exporters.LABEL:
+    # the group follows the End year being viewed (the widget's value is already in session state on a rerun)
+    _wb = bs.basics(db.psd_history(code, "00"))
+    _wlatest = int(_wb["production"].dropna().index.max()) if "production" in _wb else int(_wb.index.max())
+    rank_my = min(int(st.session_state.get("bs_end", _wlatest)), _wlatest)
+    top = exporters.top_exporters(code, rank_my)
+    group_names = list(top.country_name)
+    df = db.psd_history_multi(code, tuple(top.country_code)) if len(top) else pd.DataFrame()
+    basic = exporters.combine(df) if len(df) else pd.DataFrame()
+else:
+    df = db.psd_history(code, names[region])
+    basic = bs.basics(df) if not df.empty else df
+if df.empty or basic.empty:
     st.warning(f"No PSD history for {commodity} in {region}.")
     style.disclaimer()
     st.stop()
 
-basic = bs.basics(df)
 N = bs.derive(basic)
 first_year = int(N["production"].dropna().index.min()) if "production" in N else int(N.index.min())
 latest = int(N["production"].dropna().index.max()) if "production" in N else int(N.index.max())
@@ -140,7 +152,11 @@ with title_slot:
         f"<div style='font-size:1.05rem;font-weight:700;color:{C_GREEN};margin-top:2px'>Units: {_units_txt}</div>"
         f"<div style='color:{style.TEXT_MUTED};font-size:0.85rem;margin-top:4px'>"
         f"{mkt(b0)} &ndash; {mkt(e0)} &nbsp;·&nbsp; {system.title()} &nbsp;·&nbsp; USDA FAS PSD"
-        f"{' &nbsp;·&nbsp; updated ' + as_of_txt if as_of_txt else ''}</div></div>",
+        f"{' &nbsp;·&nbsp; updated ' + as_of_txt if as_of_txt else ''}</div>"
+        + (f"<div style='color:{style.TEXT};font-size:0.9rem;margin-top:6px'><b>Top 5 exporters in {mkt(rank_my)}:</b> "
+           f"{', '.join(group_names)}. Their balance sheets are added together; exports include trade between "
+           f"them.</div>" if group_names else "")
+        + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -198,8 +214,9 @@ D = bs.to_display(V, commodity, system, keys)
 
 _tbl_title = (f"{region} {commodity} — Supply & Demand Balance Sheet",
               f"Units: {labels['qty']} · area {labels['area']} · yield {labels['yield']}"
-              f" · {mkt(b0)} – {mkt(e0)}{'' if view == 'current' else ' · ' + view_label}")
-_jsa_all = jsa_est.load(region, commodity)
+              f" · {mkt(b0)} – {mkt(e0)}{'' if view == 'current' else ' · ' + view_label}"
+              + (f" · {', '.join(group_names)}" if group_names else ""))
+_jsa_all = {} if group_names else jsa_est.load(region, commodity)
 _jsa_col = jsa_est.jsa_column(_jsa_all.get(e0, {}), e0, keys, commodity, system)
 _extra = (jsa_est.extra_columns(D, e0, keys, _jsa_col, mkt(e0)) if view == "current" and e0 in D.index else None)
 st.markdown(bs.render_html(D, years, keys, commodity, system, view, latest, TABLE_COLORS, title=_tbl_title,
@@ -214,6 +231,8 @@ notes = {
     "lr": "Δ LR = change at the latest WASDE versus the previous one. Available for World and United States "
           "in corn, soybeans, wheat, cotton, rice and soybean oil, for the last three marketing years.",
     "ly": "Δ LY = change versus the prior marketing year (Stocks-to-Use in percentage points).",
+    "avg": "5Y Avg = average of the five marketing years before each year (Stocks-to-Use is the average of the yearly "
+           "ratios).",
     "5ya": "Δ 5YA = change versus the average of the previous five marketing years.",
 }
 st.caption(
@@ -230,6 +249,8 @@ with t2:
 @st.fragment
 def jsa_entry():
     """Type in JSA's own estimate for the end year (blank rows stay empty; password-gated only if EDIT_PASSWORD is set)."""
+    if group_names:                               # the group re-forms every year, so there is nothing stable to type into
+        return
     pw = _secret("EDIT_PASSWORD")                 # no password set = open entry; set one in secrets to lock it
     with st.expander(f"JSA estimates — {region} {commodity} {mkt(e0)}"):
         if pw and not st.session_state.get("agency_ok"):
