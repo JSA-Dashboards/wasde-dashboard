@@ -44,6 +44,11 @@ DDL = [
         unit_id INTEGER, value FLOAT, as_of INTEGER, loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
     """CREATE TABLE IF NOT EXISTS JSA.WASDE.PSD_COUNTRIES (
         country_code VARCHAR, country_name VARCHAR, region_code VARCHAR)""",
+    """CREATE TABLE IF NOT EXISTS JSA.WASDE.PSD_PREV (
+        commodity_code VARCHAR, country_code VARCHAR, market_year INTEGER, attribute_id INTEGER,
+        unit_id INTEGER, value FLOAT, as_of INTEGER, loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP)""",
+    "GRANT SELECT ON TABLE JSA.WASDE.PSD_PREV TO ROLE WASDE_ROLE",
+    "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.PSD_PREV TO ROLE WASDE_ETL_ROLE",
     "GRANT SELECT ON TABLE JSA.WASDE.PSD_HISTORY TO ROLE WASDE_ROLE",
     "GRANT SELECT ON TABLE JSA.WASDE.PSD_COUNTRIES TO ROLE WASDE_ROLE",
     "GRANT SELECT, INSERT, DELETE, TRUNCATE ON TABLE JSA.WASDE.PSD_HISTORY TO ROLE WASDE_ETL_ROLE",
@@ -156,6 +161,14 @@ def main():
                         + [(WORLD, "World", "R00")])
         conn.commit()
 
+    have_prev = False                                            # PSD_PREV is created by --setup (the ETL role can't)
+    if conn is not None:
+        try:
+            conn.cursor().execute("SELECT 1 FROM JSA.WASDE.PSD_PREV LIMIT 1")
+            have_prev = True
+        except Exception:
+            print("  (PSD_PREV is missing: run --setup once to enable the change-vs-last-report archive)", flush=True)
+
     for name in names:
         code = COMMODITIES[name]
         have: set[int] = set()
@@ -185,6 +198,21 @@ def main():
             continue
         cur = conn.cursor()
         try:
+            if have_prev:
+                # A new report is arriving: keep the one it replaces, so the page can show change vs last report.
+                # Repeat runs of the same report (same newest month) leave the archive alone.
+                new_stamp = max((t[6] for t in tuples if t[6]), default=None)
+                cur.execute("SELECT MAX(as_of) FROM JSA.WASDE.PSD_HISTORY WHERE commodity_code = %s "
+                            "AND market_year BETWEEN %s AND %s", (code, min(got), max(got)))
+                old_stamp = cur.fetchone()[0]
+                if old_stamp and new_stamp and int(new_stamp) > int(old_stamp):
+                    cur.execute("DELETE FROM JSA.WASDE.PSD_PREV WHERE commodity_code = %s", (code,))
+                    cur.execute("INSERT INTO JSA.WASDE.PSD_PREV (commodity_code, country_code, market_year, "
+                                "attribute_id, unit_id, value, as_of) SELECT commodity_code, country_code, market_year, "
+                                "attribute_id, unit_id, value, as_of FROM JSA.WASDE.PSD_HISTORY "
+                                "WHERE commodity_code = %s AND market_year BETWEEN %s AND %s",
+                                (code, min(got), max(got)))
+                    print(f"  {name}: archived the {old_stamp} report before loading {new_stamp}", flush=True)
             cur.execute("DELETE FROM JSA.WASDE.PSD_HISTORY WHERE commodity_code = %s AND market_year BETWEEN %s AND %s",
                         (code, min(got), max(got)))
             cur.executemany("INSERT INTO JSA.WASDE.PSD_HISTORY (commodity_code, country_code, market_year, "

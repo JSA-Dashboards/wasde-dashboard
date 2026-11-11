@@ -255,6 +255,22 @@ def psd_history_multi(commodity_code: str, country_codes: tuple) -> pd.DataFrame
     """, (commodity_code, *country_codes))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def psd_prev_history(commodity_code: str, country_codes: tuple) -> pd.DataFrame:
+    """The previous report's PSD rows (saved by the refresh job when a new report arrives) for the given countries.
+    Empty until the first refresh after PSD_PREV exists."""
+    marks = ", ".join(["%s"] * len(country_codes))
+    try:
+        return _query(f"""
+            SELECT country_code, market_year, attribute_id, unit_id, value, as_of
+            FROM JSA.WASDE.PSD_PREV
+            WHERE commodity_code = %s AND country_code IN ({marks})
+            ORDER BY market_year
+        """, (commodity_code, *country_codes))
+    except Exception:
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def psd_loaded_commodities() -> list[str]:
     """PSD commodity codes that have history loaded (the first full load fills these in one by one)."""
