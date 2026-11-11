@@ -29,6 +29,7 @@ ROWS = [
     ("feed_waste",       "Feed & Waste",            "Demand",       "qty",   ""),
     ("food_use",         "Food Use",                "Demand",       "qty",   ""),
     ("fsi",              "Food, Seed & Industrial", "Demand",       "qty",   ""),
+    ("ethanol",          "Ethanol (within FSI)",    "Demand",       "qty",   ""),
     ("industrial",       "Industrial Use",          "Demand",       "qty",   ""),
     ("mill_use",         "Mill Use",                "Demand",       "qty",   ""),
     ("loss",             "Loss",                    "Demand",       "qty",   ""),

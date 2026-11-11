@@ -37,6 +37,7 @@ import balance_sheet as bs  # noqa: E402
 import baseline  # noqa: E402
 import bs_chart  # noqa: E402
 import export_buttons  # noqa: E402
+import us_supplement  # noqa: E402
 import exporters  # noqa: E402
 import jsa_est  # noqa: E402
 import db  # noqa: E402
@@ -116,6 +117,8 @@ if df.empty or basic.empty:
     st.stop()
 
 N = bs.derive(basic)
+if region == "United States":                      # planted acres (NASS) and corn ethanol (WASDE): not in PSD for the U.S.
+    N = us_supplement.add(N, commodity)
 first_year = int(N["production"].dropna().index.min()) if "production" in N else int(N.index.min())
 latest = int(N["production"].dropna().index.max()) if "production" in N else int(N.index.max())
 
@@ -201,11 +204,19 @@ with t1:
 view = bs.VIEWS[view_label]
 
 prev = None
+prev_label = ""
 if view == "lr":
-    snap = {"World": "0000World", "United States": "0000US"}.get(region)
-    if snap and commodity in SNAPSHOT_COMMODITIES:
-        units = df.groupby("attribute_id")["unit_id"].agg(lambda s: s.mode().iat[0])
-        prev = bs.previous_vintage(basic, db.latest_revisions(commodity, snap), units)
+    codes = tuple(top.country_code) if group_names else (names[region],)
+    pdf = db.psd_prev_history(code, codes)
+    if not pdf.empty:                                          # the saved previous report (any country or group)
+        prev = exporters.combine(pdf) if group_names else bs.basics(pdf)
+        _pa = int(pdf["as_of"].max())
+        prev_label = f" ({MONTHS[_pa % 100 - 1]} {_pa // 100})"
+    else:                                                      # until one is saved: World / US from the WASDE snapshots
+        snap = {"World": "0000World", "United States": "0000US"}.get(region)
+        if snap and commodity in SNAPSHOT_COMMODITIES:
+            units = df.groupby("attribute_id")["unit_id"].agg(lambda s: s.mode().iat[0])
+            prev = bs.previous_vintage(basic, db.latest_revisions(commodity, snap), units)
 
 years = [y for y in range(b0, e0 + 1) if y in N.index]
 keys = bs.visible_keys(N, years, commodity)
@@ -228,8 +239,9 @@ notes = {
     "current": "Current USDA estimates and forecasts, oldest year on the left; the shaded column is the current "
                "marketing year. Δ vs LY = change from the prior year, 5-Yr Avg = average of the five years before it, "
                "JSA Est. = JSA's own numbers (— where none).",
-    "lr": "Δ LR = change at the latest WASDE versus the previous one. Available for World and United States "
-          "in corn, soybeans, wheat, cotton, rice and soybean oil, for the last three marketing years.",
+    "lr": f"Δ LR = change at the latest report versus the previous one{prev_label}, for the last few marketing "
+          "years. The previous report is saved each time a new one is loaded, so every country and commodity has it "
+          "from the next report onward.",
     "ly": "Δ LY = change versus the prior marketing year (Stocks-to-Use in percentage points).",
     "avg": "5Y Avg = average of the five marketing years before each year (Stocks-to-Use is the average of the yearly "
            "ratios).",
@@ -240,7 +252,8 @@ st.caption(
     f"· Total Use = Domestic Consumption + Exports. {notes[view]}"
 )
 if view == "lr" and prev is None:
-    st.info("Change vs last report isn't available for this commodity or region.")
+    st.info("Change vs last report isn't saved yet for this selection. The previous report's numbers are kept each "
+            "time a new report is loaded, so Δ LR appears here after the next WASDE.")
 with t2:
     st.download_button("Download table (CSV)", bs.to_csv(D, years, keys, commodity, system, _extra),
                        file_name=f"{commodity}_{region}_balance_sheet_{view}.csv".replace(" ", "_"),

@@ -47,6 +47,7 @@ CSV_ITEMS = {
     "Production": "Production", "Imports": "Imports", "Supply, Total": "Total Supply", "Exports": "Exports",
     "Feed and Residual": "Feed", "Food, Seed & Industrial": "FSI", "Domestic, Total": "Domestic Consumption",
     "Use, Total": "Total Demand", "Ending Stocks": "Ending Stocks", "Crushings": "Crush",
+    "Ethanol & by-products": "Ethanol",                      # corn only; shown on the Balance Sheet page, not Progression
 }
 CSV_UNITS = {"Harvested Area": "Million Acres", "Yield": "Bushels"}          # everything else: Million Bushels
 

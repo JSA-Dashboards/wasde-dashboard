@@ -30,6 +30,8 @@ rc=0
     # U.S. WASDE-by-WASDE progression (corn / wheat / soybeans): last 3 reports, USDA CSV with archive-XML fallback.
     # Runs on the same 12th + 14th schedule; a failure here must not fail the PSD refresh.
     "$VENV/bin/python" -u etl/fetch_us_progression.py || echo "US progression fetch failed — continuing"
+    # U.S. planted acres by crop (from the NASS cache); skipped quietly if this role can't read it yet.
+    "$VENV/bin/python" -u etl/load_nass_planted.py || echo "NASS planted-acres load failed — continuing"
     echo "=== PSD history refresh finished $(date -Is) rc=$rc ==="
 } >>"$LOG" 2>&1
 
