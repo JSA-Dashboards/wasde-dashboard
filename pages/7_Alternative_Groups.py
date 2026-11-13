@@ -742,9 +742,27 @@ def conab_balance():
         shown = True
         grain = prod == crop                                   # grain converts to bushels; meal/oil stay in tonnes
         unit = ul if grain else "1,000 t"
-        seasons = (d.drop_duplicates("season").sort_values("start_year", ascending=False)["season"].tolist())
-        cur = seasons[0]
+        sy_of = d.drop_duplicates("season").set_index("season")["start_year"].to_dict()
+        seasons = sorted(sy_of, key=sy_of.get)                 # oldest first, newest on the right (like the PSD sheet)
         items = d.sort_values("item_order").drop_duplicates("item")["item"].tolist()
+
+        # CONAB's survey (area, yield, production) runs ahead of its balance sheet: area and yield come from the survey
+        # for every season, and a season the survey has but the balance sheet doesn't yet (the new crop) is added with
+        # production / area / yield only.
+        ser: dict[str, dict] = {"prod": {}, "area": {}, "yld": {}}
+        survey_label: dict[int, str] = {}
+        if grain:
+            sdf = db.conab_series(prod)
+            if not sdf.empty:
+                tot = sdf[sdf.level == "total"].drop_duplicates(["metric", "start_year"])
+                for m, k in (("production_kt", "prod"), ("area_kha", "area"), ("yield_kgha", "yld")):
+                    ser[k] = tot[tot.metric == m].set_index("start_year")["value"].to_dict()
+                survey_label = tot[tot.metric == "production_kt"].set_index("start_year")["label"].to_dict()
+        new_seasons = [y for y in sorted(survey_label) if y > max(sy_of.values()) and ser["prod"].get(y)]
+        for y in new_seasons:
+            seasons.append(survey_label[y])
+            sy_of[survey_label[y]] = y
+        cur = seasons[-1]
 
         def val(item, season, rank):
             m = d[(d.item == item) & (d.season == season) & (d.rev_rank == rank)]
@@ -754,10 +772,19 @@ def conab_balance():
             return None if v is None else (cvt(v, crop, imperial) if grain else v)
 
         rows = []
+        if grain and (ser["area"] or ser["yld"]):              # area and yield first, like the PSD balance sheet
+            for key, label, dec, fn in (("area", "Area (M ha)", 2, lambda v: v / 1000),
+                                        ("yld", f"Yield ({yu})", 2, lambda v: yld(v, crop, imperial))):
+                if ser[key]:
+                    rows.append((label, "qty",
+                                 {s: (None if delta or ser[key].get(sy_of[s]) is None else fn(ser[key][sy_of[s]]))
+                                  for s in seasons}, dec))
         for it in items:
             vals = {}
             for s in seasons:
                 a = val(it, s, 0)
+                if a is None and it == "Production" and sy_of[s] in new_seasons:
+                    a = ser["prod"].get(sy_of[s])              # new crop: CONAB's survey figure
                 if delta:
                     b = val(it, s, 1)
                     vals[s] = None if a is None or b is None else conv(a) - conv(b)
@@ -781,6 +808,10 @@ def conab_balance():
         st.markdown(f"<div style='font-weight:600;margin:10px 0 4px;color:{style.TEXT}'>Brazil {title}</div>",
                     unsafe_allow_html=True)
         st.markdown(sd_table.render(rows, seasons, cur, unit, TABLE_COLORS, signed=delta), unsafe_allow_html=True)
+        if new_seasons:
+            st.caption(f"{survey_label[new_seasons[-1]]}: CONAB hasn't added this crop year to its balance sheet yet, so "
+                       "only its survey production, area and yield are shown; the other lines fill in when CONAB does. "
+                       "Area is CONAB's planted area.")
         if delta:
             if len(revs) and len(prev):
                 st.caption(f"Change from the {prev.iloc[0]} report to {revs.iloc[0]} (only seasons CONAB revised).")
