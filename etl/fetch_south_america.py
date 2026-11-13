@@ -213,8 +213,8 @@ def parse_sd(content: bytes, source: str) -> pd.DataFrame:
     if main:
         df = book.parse(main, header=None)
         hi = next(i for i in range(len(df)) if _norm(df.iat[i, 0]) == "produto")
-        cols = {j: SD_COLS[_norm(df.iat[hi, j]).replace(" ", "")] for j in range(df.shape[1])
-                if _norm(df.iat[hi, j]).replace(" ", "") in SD_COLS}
+        hk = lambda v: re.sub(r"\s+", "", _norm(v))      # headers can wrap onto two lines
+        cols = {j: SD_COLS[hk(df.iat[hi, j])] for j in range(df.shape[1]) if hk(df.iat[hi, j]) in SD_COLS}
         order = {n: i for i, n in enumerate(SD_COLS.values())}
         prod = seas = None
         groups: dict = {}
